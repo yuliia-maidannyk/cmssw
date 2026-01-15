@@ -1,0 +1,15 @@
+log = cmssw_$(ProcId).log
+output = cmssw_$(ProcId).out
+error = cmssw_$(ProcId).error
+notification = Always
+
+should_transfer_files = Yes
+when_to_transfer_output = ON_EXIT
+
+executable = biggenerate.sh 
+arguments = $(ProcId)
+transfer_executable = True
+
++JobFlavour = "testmatch"
+
+queue 5

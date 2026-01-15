@@ -7,6 +7,10 @@ struct MTDHit {
   float x;
   float y;
   float z;
+  int process;
+  int type;
+  int pdgId;
+  int trackId;
 };
 
 #endif  //Validation_MtdValidation_MTDHit_h

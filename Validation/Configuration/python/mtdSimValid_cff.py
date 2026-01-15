@@ -15,13 +15,9 @@ mtdAssociationProducers = cms.Sequence( mtdRecoClusterToSimLayerClusterAssociato
 from Validation.MtdValidation.btlSimHitsValid_cfi import btlSimHitsValid
 from Validation.MtdValidation.btlDigiHitsValid_cfi import btlDigiHitsValid
 from Validation.MtdValidation.btlLocalRecoValid_cfi import btlLocalRecoValid
-from Validation.MtdValidation.etlLocalRecoValid_cfi import etlLocalRecoValid
-from Validation.MtdValidation.etlSimHitsValid_cfi import etlSimHitsValid
-from Validation.MtdValidation.etlDigiHitsValid_cfi import etlDigiHitsValid
-from Validation.MtdValidation.mtdTracksValid_cfi import mtdTracksValid
-from Validation.MtdValidation.vertices4DValid_cff import vertices4DValid
+from Validation.MtdValidation.btlClustering_cfi import btlClustering
 
-mtdSimValid  = cms.Sequence(btlSimHitsValid  + etlSimHitsValid )
-mtdDigiValid = cms.Sequence(btlDigiHitsValid + etlDigiHitsValid)
-mtdRecoValid = cms.Sequence(mtdAssociationProducers + btlLocalRecoValid  + etlLocalRecoValid + mtdTracksValid + vertices4DValid)
+mtdSimValid  = cms.Sequence(btlSimHitsValid)
+mtdDigiValid = cms.Sequence(btlDigiHitsValid)
+mtdRecoValid = cms.Sequence(mtdAssociationProducers + btlLocalRecoValid  + btlClustering)
 
