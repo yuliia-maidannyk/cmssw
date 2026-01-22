@@ -5,6 +5,6 @@ from Validation.EcalHits.ecalSimHitsValidation_cfi import *
 from Validation.EcalHits.ecalBarrelSimHitsValidation_cfi import *
 from Validation.EcalHits.ecalEndcapSimHitsValidation_cfi import *
 from Validation.EcalHits.ecalPreshowerSimHitsValidation_cfi import *
-from Validation.EcalHits.transClustering_cfi import *
-ecalSimHitsValidationSequence = cms.Sequence(ecalSimHitsValidation*ecalBarrelSimHitsValidation*transClustering*ecalEndcapSimHitsValidation*ecalPreshowerSimHitsValidation)
+#from Validation.EcalHits.transClustering_cfi import *
+ecalSimHitsValidationSequence = cms.Sequence(ecalSimHitsValidation*ecalBarrelSimHitsValidation*ecalPreshowerSimHitsValidation)
 

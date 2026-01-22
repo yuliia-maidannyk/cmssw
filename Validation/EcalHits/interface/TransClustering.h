@@ -33,56 +33,15 @@
 #include "SimDataFormats/CaloAnalysis/interface/SimClusterFwd.h"
 #include "SimDataFormats/GeneratorProducts/interface/HepMCProduct.h"
 
-// #include "CondFormats/EcalObjects/interface/EcalADCToGeVConstant.h"
-// #include "CondFormats/DataRecord/interface/EcalADCToGeVConstantRcd.h"
-// #include "CondFormats/EcalObjects/interface/EcalChannelStatus.h"
-// #include "CondFormats/DataRecord/interface/EcalChannelStatusRcd.h"
-// #include "Geometry/CaloTopology/interface/EcalTrigTowerConstituentsMap.h"
-// #include "Geometry/Records/interface/IdealGeometryRecord.h"
-
-//#include "Validation/EcalClusters/interface/EcalSimPhotonMCTruth.h"
-
 #include <map>
 #include <vector>
 #include <TFile.h>
 #include <TTree.h>
 #include <string>
 
-class EcalSimPhotonMCTruth {
-public:
-  EcalSimPhotonMCTruth()
-      : isAConversion_(0), thePhoton_(0., 0., 0., 0.), theR_(0.), theZ_(0.), theConvVertex_(0., 0., 0., 0.) {}
-
-  EcalSimPhotonMCTruth(const math::XYZTLorentzVectorD &v) : thePhoton_(v) {}
-
-  EcalSimPhotonMCTruth(int isAConversion,
-                       const math::XYZTLorentzVectorD &v,
-                       float rconv,
-                       float zconv,
-                       const math::XYZTLorentzVectorD &convVertex,
-                       const math::XYZTLorentzVectorD &pV,
-                       const std::vector<const SimTrack *> &tracks);
-
-  math::XYZTLorentzVectorD primaryVertex() const { return thePrimaryVertex_; }
-  int isAConversion() const { return isAConversion_; }
-  float radius() const { return theR_; }
-  float z() const { return theZ_; }
-  math::XYZTLorentzVectorD fourMomentum() const { return thePhoton_; }
-  math::XYZTLorentzVectorD vertex() const { return theConvVertex_; }
-  std::vector<const SimTrack *> simTracks() const { return tracks_; }
-
-private:
-  int isAConversion_;
-  math::XYZTLorentzVectorD thePhoton_;
-  float theR_;
-  float theZ_;
-  math::XYZTLorentzVectorD theConvVertex_;
-  math::XYZTLorentzVectorD thePrimaryVertex_;
-  std::vector<const SimTrack *> tracks_;
-};
-
 class TransClustering : public DQMEDAnalyzer {
   typedef std::map<std::pair<int, int>, float> MapType;
+  typedef std::map<std::pair<int, int>, std::vector<int>> CaloMapType;
 
 public:
   typedef dqm::legacy::DQMStore DQMStore;
@@ -93,11 +52,8 @@ public:
 protected: 
   void bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::EventSetup const&) override;
 
-  std::vector<EcalSimPhotonMCTruth> findMcTruth(std::vector<SimTrack> &theSimTracks, std::vector<SimVertex> &theSimVertices);
-
-  void fillMcTruth(std::vector<SimTrack> &simTracks, std::vector<SimVertex> &simVertices);
-
   float ecalEta(float EtaParticle, float Zvertex, float plane_Radius);
+  void fillMcTruth(std::vector<SimTrack> &simTracks, std::vector<SimVertex> &simVertices);
 
   void analyze(const edm::Event&, const edm::EventSetup&) override;
 
@@ -112,8 +68,6 @@ private:
   edm::EDGetTokenT<reco::GenParticleCollection> genParticleToken;
   edm::EDGetTokenT<edm::SimTrackContainer> SimTrackToken;
   edm::EDGetTokenT<edm::SimVertexContainer> SimVertexToken;
-  //edm::EDGetTokenT<EcalRecHitCollection> reducedBarrelRecHitToken;
-  //edm::ESGetToken<EcalADCToGeVConstant, EcalADCToGeVConstantRcd> pAgc_;
   edm::EDGetTokenT<EcalUncalibratedRecHitCollection> EBuncalibrechitCollection_Token;
   edm::EDGetTokenT<EBRecHitCollection> EBrechitCollection_Token;
   edm::EDGetTokenT<CaloParticleCollection> CaloParticle_Token;
@@ -123,59 +77,59 @@ private:
   TTree* simTree;
   TTree* recoTree;
   TTree* caloTree;
+  TTree* genTree;
 
-  std::map<unsigned, unsigned> geantToIndex_;
-
-  std::vector<int> mapIEta;
-  std::vector<int> mapIPhi;
-  std::vector<float> mapValues;
-
-  std::vector<int> recIEta;
-  std::vector<int> recIPhi;
-  std::vector<float> recValues;
-
-  std::vector<std::string>    simPDG;
+  std::vector<int>      simPDG;
   std::vector<float>    simT;
   std::vector<float>    simE;
   std::vector<int>      simPhi;
   std::vector<int>      simEta;
   std::vector<float>    simZ;
   std::vector<int>      simEvent;
+  std::vector<int>      simSubEvent;
   std::vector<uint64_t> simTrackId;
+  std::vector<int>      simIEta;
+  std::vector<int>      simIPhi;
+  std::vector<float>    simValues;
 
-  std::vector<float> recoT;
-  std::vector<float> recoE;
-  std::vector<float> recoLocX;
-  std::vector<float> recoLocY;
-  std::vector<float> recoLocZ;
-  std::vector<float> recoTheta;
-  std::vector<float> recoPhi;
-  std::vector<float> recoEta;
-  std::vector<float> recoX;
-  std::vector<float> recoY;
-  std::vector<float> recoZ;
-  std::vector<int> recoEvent;
+  std::vector<float>    recoT;
+  std::vector<float>    recoE;
+  std::vector<float>    recoPhi;
+  std::vector<float>    recoEta;
+  std::vector<int>      recoEvent;
   std::vector<uint32_t> recoID;
+  std::vector<int>      recoIEta;
+  std::vector<int>      recoIPhi;
+  std::vector<float>    recoValues;
 
-  std::vector<float> caloT;
-  std::vector<float> caloE;
-  std::vector<float> caloPt;
-  // std::vector<float> caloX;
-  // std::vector<float> caloY;
-  // std::vector<float> caloZ;
-  // std::vector<float> caloTheta;
-  std::vector<float> caloPhi;
-  std::vector<float> caloEta;
-  std::vector<float> caloPDG;
-  std::vector<int> caloEvent;
-  // std::vector<int> caloSubEvent;
-  // std::vector<uint64_t> caloTrackId;
-  // std::vector<uint32_t> caloID;
-  // std::vector<int> caloDecay;
-  std::vector<float> caloSourceX;
-  std::vector<float> caloSourceY;
-  std::vector<float> caloSourceZ;
-  // std::vector<float> caloSourceT;
+  std::vector<float>    caloT;
+  std::vector<float>    caloE;
+  std::vector<float>    caloPt;
+  std::vector<float>    caloPhi;
+  std::vector<float>    caloEta;
+  std::vector<float>    caloPDG;
+  std::vector<int>      caloEvent;
+  std::vector<int>      caloSubEvent;
+  std::vector<int>      caloIEta;
+  std::vector<int>      caloIPhi;
+  std::vector<int>      caloValues;
+  std::vector<uint64_t> caloTrackId;
+
+  std::vector<float> genT;
+  std::vector<float> genE;
+  std::vector<float> genPt;
+  std::vector<float> genPhi;
+  std::vector<float> genEta;
+  std::vector<int>   genPDG;
+  std::vector<int>   genEvent;
+  std::vector<float> genSourceX;
+  std::vector<float> genSourceY;
+  std::vector<float> genSourceZ;
+  std::vector<int>   genIsConverted;
+  std::vector<float> genConvR;
+  std::vector<float> genConvZ;
+
+  std::map<unsigned, unsigned> geantToIndex_;
 };
 
 #endif

@@ -6,8 +6,9 @@ from Validation.EcalHits.ecalSimHitsValidationSequence_cff import *
 from Validation.EcalDigis.ecalDigisValidationSequence_cff import *
 from Validation.EcalRecHits.ecalRecHitsValidationSequence_cff import *
 from Validation.EcalClusters.ecalClustersValidationSequence_cff import *
+from Validation.EcalHits.transClustering_cfi import *
 
-ecalSimValid = cms.Sequence(ecalSimHitsValidationSequence+ecalDigisValidationSequence+ecalRecHitsValidationSequence+ecalClustersValidationSequence)
+ecalSimValid = cms.Sequence(ecalSimHitsValidationSequence+ecalDigisValidationSequence+ecalRecHitsValidationSequence+ecalClustersValidationSequence+transClustering)
 
 from DQM.EcalMonitorTasks.EcalMonitorTask_cfi import *
 from DQM.EcalMonitorTasks.EcalFEDMonitor_cfi import *
@@ -26,5 +27,6 @@ validationECALPhase2 = cms.Sequence(
     ecalDigisValidationSequence*
     ecalRecHitsValidationSequencePhase2*
     ecalClustersValidationSequence*
+    transClustering*
     ecalDQMSequencePhase2
 )
