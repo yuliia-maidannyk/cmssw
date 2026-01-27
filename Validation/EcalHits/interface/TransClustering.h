@@ -19,6 +19,13 @@
 #include "DataFormats/EcalRecHit/interface/EcalUncalibratedRecHit.h"
 #include "DataFormats/EcalRecHit/interface/EcalRecHit.h"
 #include "DataFormats/EcalRecHit/interface/EcalRecHitCollections.h"
+#include "DataFormats/ParticleFlowReco/interface/PFCluster.h"
+#include "DataFormats/ParticleFlowReco/interface/PFClusterFwd.h"
+#include "RecoParticleFlow/PFClusterTools/interface/PFEnergyCalibration.h"
+#include "RecoParticleFlow/PFClusterTools/interface/PFEnergyResolution.h"
+#include "CommonTools/ParticleFlow/interface/PFClusterWidthAlgo.h"
+#include "RecoParticleFlow/PFTracking/interface/PFTrackAlgoTools.h"
+#include "DataFormats/ParticleFlowReco/interface/PFRecHitFraction.h" 
 
 #include "SimDataFormats/CaloHit/interface/PCaloHit.h"
 #include "SimDataFormats/CaloHit/interface/PCaloHitContainer.h"
@@ -66,6 +73,7 @@ private:
   edm::EDGetTokenT<edm::PCaloHitContainer> EBHitsToken;
   edm::EDGetTokenT<PEcalValidInfo> ValidationCollectionToken;
   edm::EDGetTokenT<reco::GenParticleCollection> genParticleToken;
+  edm::EDGetTokenT<reco::PFClusterCollection> pfClusterToken;
   edm::EDGetTokenT<edm::SimTrackContainer> SimTrackToken;
   edm::EDGetTokenT<edm::SimVertexContainer> SimVertexToken;
   edm::EDGetTokenT<EcalUncalibratedRecHitCollection> EBuncalibrechitCollection_Token;
@@ -77,6 +85,7 @@ private:
   TTree* simTree;
   TTree* recoTree;
   TTree* caloTree;
+  TTree* pfTree;
   TTree* genTree;
 
   std::vector<int>      simPDG;
@@ -128,6 +137,11 @@ private:
   std::vector<int>   genIsConverted;
   std::vector<float> genConvR;
   std::vector<float> genConvZ;
+
+  std::vector<int>    pfEvent;
+  std::vector<int>  pfPhi;
+  std::vector<int>  pfEta;
+  std::vector<double>  pfE;
 
   std::map<unsigned, unsigned> geantToIndex_;
 };

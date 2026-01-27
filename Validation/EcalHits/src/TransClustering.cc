@@ -31,6 +31,7 @@ TransClustering::TransClustering(const edm::ParameterSet& iConfig)
   SimVertexToken = consumes<edm::SimVertexContainer>(iConfig.getParameter<edm::InputTag>("simVertexCollection"));
   CaloParticle_Token = consumes<CaloParticleCollection>(iConfig.getParameter<edm::InputTag>("CaloParticleCollection"));
   HepMCToken = consumes<edm::HepMCProduct>(iConfig.getParameter<edm::InputTag>("HepMCProductLabel"));
+  pfClusterToken = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECAL"));
 }
 
 TransClustering::~TransClustering() {
@@ -38,6 +39,7 @@ TransClustering::~TransClustering() {
   recoTree->Fill();
   caloTree->Fill();
   genTree->Fill();
+  pfTree->Fill();
   myFile->Write();
   myFile->Close();
 }
@@ -66,12 +68,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   edm::Handle<reco::GenParticleCollection> genParticles;
   iEvent.getByToken(genParticleToken, genParticles);
 
-  const EBUncalibratedRecHitCollection *EBUncalibRecHit = nullptr;
-  edm::Handle<EBUncalibratedRecHitCollection> EcalUncalibRecHitEB;
-  iEvent.getByToken(EBuncalibrechitCollection_Token, EcalUncalibRecHitEB);
-  if (EcalUncalibRecHitEB.isValid()) {
-    EBUncalibRecHit = EcalUncalibRecHitEB.product();
-  }
   const EBRecHitCollection *EBRecHit = nullptr;
   edm::Handle<EBRecHitCollection> EcalRecHitEB;
   iEvent.getByToken(EBrechitCollection_Token, EcalRecHitEB);
@@ -92,17 +88,19 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   // }
 
   // Match using indices
-  for (const auto& cp : *caloParticles) {
-      for (auto g4t = cp.g4Track_begin(); g4t != cp.g4Track_end(); ++g4t) {
-          int g4TrackId = g4t->trackId();
-          // Match this to genParticle using genParticleIndices
-          if (g4t->genpartIndex() >= 0 && 
-              g4t->genpartIndex() < (int)genParticles->size()) {
-              const auto& matchedGenP = (*genParticles)[g4t->genpartIndex()];
-              std::cout << "Matched GenParticle: " << matchedGenP.pdgId() << std::endl;
-          }
-      }
-  }
+  // for (const auto& cp : *caloParticles) {
+  //     for (auto g4t = cp.g4Track_begin(); g4t != cp.g4Track_end(); ++g4t) {
+  //         int g4TrackId = g4t->trackId();
+  //         // Match this to genParticle using genParticleIndices
+  //         if (g4t->genpartIndex() >= 0 && 
+  //             g4t->genpartIndex() < (int)genParticles->size()) {
+  //             const auto& matchedGenP = (*genParticles)[g4t->genpartIndex()];
+  //             std::cout << "Matched GenParticle: " << matchedGenP.pdgId() << std::endl;
+  //         }
+  //     }
+  // }
+  edm::Handle<reco::PFClusterCollection> pfClusters;
+  iEvent.getByToken(pfClusterToken, pfClusters);
 
   // *************** Loop over the HEP MC products *****************
   
@@ -284,52 +282,12 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     }
   }
 
-  // **************** Loop over the EB REC hits ****************
-
-  MapType recMap;
-  double EBEnergy_ = 0.;
-  uint32_t nEBHits = 0;
-
-  for (EcalUncalibratedRecHitCollection::const_iterator uncalibRecHit = EBUncalibRecHit->begin();
-         uncalibRecHit != EBUncalibRecHit->end();
-         ++uncalibRecHit) {
-      // EBDetId ebid = EBDetId(uncalibRecHit->id());
-
-      // // Find corresponding recHit
-      // EcalRecHitCollection::const_iterator myRecHit = EBRecHit->find(ebid);
-      // if (myRecHit == EBRecHit->end())
-      //   continue;
-      // int ieta = ebid.ieta();
-      // int iphi = ebid.iphi();
-      // recMap[std::make_pair(ieta, iphi)] += myRecHit->energy();
-      // EBEnergy_ += myRecHit->energy();
-      nEBHits++;
-  }
-  nEBHits = 0;
-  for (EcalRecHitCollection::const_iterator recHit = EBRecHit->begin(); recHit != EBRecHit->end(); ++recHit) {
-    EBDetId ebid = EBDetId(recHit->id());
-    int ieta = ebid.ieta();
-    int iphi = ebid.iphi();
-    recMap[std::make_pair(ieta, iphi)] += recHit->energy();
-    EBEnergy_ += recHit->energy();
-    nEBHits++;
-  }
-  std::cout << "Number of EB rec hits: " << nEBHits << std::endl;
-  std::cout << "Total EB rec energy: " << EBEnergy_ << std::endl;
-
-  for (const auto& [key, val] : recMap) {
-    recoIEta.push_back(key.first);
-    recoIPhi.push_back(key.second);
-    recoValues.push_back(val);
-    recoEvent.push_back(iEvent.id().event());
-  }
-
   // **************** Loop over the EB SIM hits ****************
 
   std::map<unsigned int, std::vector<PCaloHit *>, std::less<unsigned int>> CaloHitMap;
   MapType simMap;
-  EBEnergy_ = 0.;
-  nEBHits = 0;
+  double EBEnergy_ = 0.;
+  uint32_t nEBHits = 0;
 
   for (std::vector<PCaloHit>::iterator isim = theEBCaloHits.begin(); isim != theEBCaloHits.end(); ++isim) {
     if (isim->time() > 500.) {
@@ -362,12 +320,79 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   std::cout << "Number of EB sim hits: " << nEBHits << std::endl;
   std::cout << "Total EB sim energy: " << EBEnergy_ << std::endl;
 
+  float max_energy = 0.;
+  std::pair<int, int> max_pos;
   for (const auto& [key, val] : simMap) {
     simIEta.push_back(key.first);
     simIPhi.push_back(key.second);
     simValues.push_back(val);
+    if (val > max_energy) {
+      max_pos.first = key.first;
+      max_pos.second = key.second;
+    }
+    max_energy = val;
     simSubEvent.push_back(iEvent.id().event());
   }
+
+  // **************** Loop over the EB REC hits ****************
+
+  MapType recoMap;
+  EBEnergy_ = 0.;
+  nEBHits = 0;
+
+  for (EcalRecHitCollection::const_iterator recHit = EBRecHit->begin(); recHit != EBRecHit->end(); ++recHit) {
+    EBDetId ebid = EBDetId(recHit->id());
+    int ieta = ebid.ieta();
+    int iphi = ebid.iphi();
+    recoMap[std::make_pair(ieta, iphi)] += recHit->energy();
+    EBEnergy_ += recHit->energy();
+    nEBHits++;
+  }
+  std::cout << "Number of EB rec hits: " << nEBHits << std::endl;
+  // std::cout << "Total EB rec energy: " << EBEnergy_ << std::endl;
+
+  for (const auto& [key, val] : recoMap) {
+    recoIEta.push_back(key.first);
+    recoIPhi.push_back(key.second);
+    recoValues.push_back(val);
+    recoEvent.push_back(iEvent.id().event());
+  }
+
+  // Sum rec hit energy in 7x7 region around the max_pos
+  float recoE_7x7 = 0.;
+  for (int dEta = -3; dEta <= 3; ++dEta) {
+      int ieta = max_pos.first + dEta;
+      // EB ieta ranges from -85 to 85, skipping 0
+      if (ieta == 0 || ieta < -85 || ieta > 85) continue;
+      for (int dPhi = -3; dPhi <= 3; ++dPhi) {
+          int iphi = max_pos.second + dPhi;
+          // Wrap iphi around [1,360]
+          if (iphi < 1) iphi += 360;
+          if (iphi > 360) iphi -= 360;
+          auto it = recoMap.find({ieta, iphi});
+          if (it != recoMap.end()) {
+              recoE_7x7 += it->second;
+          }
+      }
+  }
+  std::cout << std::endl;
+  std::cout << "RecHit energy in 7x7 region around the maximum: " << recoE_7x7 << std::endl;
+  std::cout << std::endl;
+
+  // **************** Loop over the PFClusters ****************
+
+  for (const auto& pf : *pfClusters)
+  {
+    DetId ebid = pf.seed();
+    EBDetId ebdetid(ebid);
+    pfEvent.push_back(iEvent.id().event());
+    pfEta.push_back(ebdetid.ieta());
+    pfPhi.push_back(ebdetid.iphi());
+    pfE.push_back(pf.correctedEnergy());
+    std::cout << " PFCluster E=" << pf.correctedEnergy() << " at (" 
+    << ebdetid.ieta() << ", " << ebdetid.iphi() << ")" << std::endl;
+  }
+
 } // --- end of analyze
 
 // ------------ helper method for photon conversion tracking ------------
@@ -443,4 +468,10 @@ void TransClustering::bookHistograms(DQMStore::IBooker& ibook, edm::Run const& r
   genTree->Branch("isConverted", &genIsConverted);
   genTree->Branch("convR",       &genConvR);
   genTree->Branch("convZ",       &genConvZ);
+
+  pfTree = new TTree("pfTree", "A tree with PFCluster information");
+  pfTree->Branch("energy", &pfE);
+  pfTree->Branch("eta",    &pfEta);
+  pfTree->Branch("phi",    &pfPhi);
+  pfTree->Branch("event",  &pfEvent);
 }

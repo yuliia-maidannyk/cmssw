@@ -13,7 +13,8 @@ transClustering = DQMEDAnalyzer("TransClustering",
     EBuncalibrechitCollection   = cms.InputTag("ecalMultiFitUncalibRecHit","EcalUncalibRecHitsEB"),
     CaloParticleCollection      = cms.InputTag("mix", "MergedCaloTruth"),
     jobId                       = cms.string('NOJOBID'),
-    HepMCProductLabel           = cms.InputTag('generatorSmeared')
+    HepMCProductLabel           = cms.InputTag('generatorSmeared'),
+    particleFlowClusterECAL     = cms.InputTag("particleFlowClusterECAL")
 )
 
 
