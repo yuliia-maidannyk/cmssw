@@ -2,34 +2,36 @@
 
 #include "IOMC/ParticleGuns/interface/ManyParticleFlatRandomEGunProducer.h"
 
-#include "SimDataFormats/GeneratorProducts/interface/HepMCProduct.h"
-#include "SimDataFormats/GeneratorProducts/interface/GenEventInfoProduct.h"
-
-#include "FWCore/Framework/interface/Event.h"
-#include "FWCore/ParameterSet/interface/ParameterSet.h"
 #include "FWCore/ServiceRegistry/interface/Service.h"
 #include "FWCore/Utilities/interface/RandomNumberGenerator.h"
+
+#include "SimDataFormats/GeneratorProducts/interface/HepMCProduct.h"
+#include "SimDataFormats/GeneratorProducts/interface/GenEventInfoProduct.h"
 
 #include "CLHEP/Random/RandFlat.h"
 
 using namespace edm;
 using namespace std;
 
-ManyParticleFlatRandomEGunProducer::ManyParticleFlatRandomEGunProducer(const ParameterSet& pset): BaseFlatGunProducer(pset) {
-  ParameterSet defpset;
-  ParameterSet pgun_params = pset.getParameter<ParameterSet>("PGunParameters");
+ManyParticleFlatRandomEGunProducer::ManyParticleFlatRandomEGunProducer(const ParameterSet& pset)
+    : fPDGTableToken(esConsumes()) {
+  ParameterSet pgun = pset.getParameter<ParameterSet>("PGunParameters");
 
-  fMinE   = pgun_params.getParameter<std::vector<double>>("MinE");
-  fMaxE   = pgun_params.getParameter<std::vector<double>>("MaxE");
-  fMinEta = pgun_params.getParameter<std::vector<double>>("MinEta");
-  fMaxEta = pgun_params.getParameter<std::vector<double>>("MaxEta");
-  fMinPhi = pgun_params.getParameter<std::vector<double>>("MinPhi");
-  fMaxPhi = pgun_params.getParameter<std::vector<double>>("MaxPhi");
+  fPartIDs  = pgun.getParameter<std::vector<int>>("PartID");
+  fMinE     = pgun.getParameter<std::vector<double>>("MinE");
+  fMaxE     = pgun.getParameter<std::vector<double>>("MaxE");
+  fMinEta   = pgun.getParameter<std::vector<double>>("MinEta");
+  fMaxEta   = pgun.getParameter<std::vector<double>>("MaxEta");
+  fMinPhi   = pgun.getParameter<std::vector<double>>("MinPhi");
+  fMaxPhi   = pgun.getParameter<std::vector<double>>("MaxPhi");
+
+  fAddAntiParticle = pset.getParameter<bool>("AddAntiParticle");
+  fVerbosity = pset.getUntrackedParameter<int>("Verbosity", 0);
 
   produces<HepMCProduct>("unsmeared");
   produces<GenEventInfoProduct>();
 
-  cout << "ManyParticleFlatRandomEGunProducer initialized" << endl;
+  cout << "ManyParticleFlatRandomEGunProducer initialized with " << fMinE.size() << " particles" << endl;
 }
 
 ManyParticleFlatRandomEGunProducer::~ManyParticleFlatRandomEGunProducer() {
@@ -44,9 +46,9 @@ void ManyParticleFlatRandomEGunProducer::produce(Event& e, const EventSetup& es)
     cout << " ManyParticleFlatRandomEGunProducer : Begin New Event Generation" << endl;
   }
 
-  fEvt = new HepMC::GenEvent();
-
+  HepMC::GenEvent* fEvt = new HepMC::GenEvent();
   HepMC::GenVertex* Vtx = new HepMC::GenVertex(HepMC::FourVector(0., 0., 0.));
+  fPDGTable = es.getHandle(fPDGTableToken);
 
   int barcode = 1;
 
@@ -106,6 +108,3 @@ void ManyParticleFlatRandomEGunProducer::produce(Event& e, const EventSetup& es)
     cout << " ManyParticleFlatRandomEGunProducer : Event Generation Done " << endl;
   }
 }
-
-#include "FWCore/Framework/interface/MakerMacros.h"
-DEFINE_FWK_MODULE(edm::ManyParticleFlatRandomEGunProducer);
