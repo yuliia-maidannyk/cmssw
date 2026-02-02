@@ -11,6 +11,7 @@
 #include "DQMServices/Core/interface/DQMStore.h"
 #include "FWCore/Utilities/interface/Exception.h"
 #include <DataFormats/EcalDetId/interface/EBDetId.h>
+#include "Geometry/EcalAlgo/interface/EcalBarrelGeometry.h"
 
 #include "Validation/EcalHits/interface/TransClustering.h"
 
@@ -32,6 +33,8 @@ TransClustering::TransClustering(const edm::ParameterSet& iConfig)
   CaloParticle_Token = consumes<CaloParticleCollection>(iConfig.getParameter<edm::InputTag>("CaloParticleCollection"));
   HepMCToken = consumes<edm::HepMCProduct>(iConfig.getParameter<edm::InputTag>("HepMCProductLabel"));
   pfClusterToken = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECAL"));
+  //barrelGeomToken = consumes<CaloSubdetectorGeometry, EcalBarrelGeometryRecord>(iConfig.getParameter<edm::InputTag>("EcalBarrel"));
+  barrelGeomToken = esConsumes<CaloSubdetectorGeometry, EcalBarrelGeometryRecord>(edm::ESInputTag("", "EcalBarrel"));
 }
 
 TransClustering::~TransClustering() {
@@ -140,8 +143,13 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     if (simTk.noVertex()) continue;
     if (simTk.vertIndex() == iPV && simTk.type() == 22) {
       photonTracks.push_back(&simTk);
+      std::cout << "Found SimTrack photon: trackId=" << simTk.trackId() 
+                << " eta=" << simTk.momentum().eta() 
+                << " phi=" << simTk.momentum().phi() 
+                << " E=" << simTk.momentum().E() << std::endl;
     }
   }
+  std::cout << "Total SimTrack photons from primary vertex: " << photonTracks.size() << std::endl;
 
   // For each photon, look for conversion electrons
   for (auto* phoTk : photonTracks) {
@@ -174,6 +182,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     }
     
     photonConversionInfo[phoTk->trackId()] = std::make_pair(convR, convZ);
+    std::cout << "  Photon trackId=" << phoTk->trackId() << " conversion: R=" << convR << ", Z=" << convZ << std::endl;
   }
 
   // ***************** Loop over the GEN particles *****************
@@ -199,15 +208,40 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     int isConverted = 0;
     float convR = 0., convZ = 0.;
     if (pdgId == 22 && iPV >= 0) {
-      // Try to find matching SimTrack photon from primary vertex
-      for (const auto& [trackId, convInfo] : photonConversionInfo) {
-        // Check if R, Z are non-zero (indicates conversion)
+      // Match GenParticle photon to SimTrack photon by kinematic proximity
+      float minDR = 0.1;  // dR matching threshold
+      unsigned bestTrackId = 0;
+      
+      for (auto* phoTk : photonTracks) {
+        // Calculate dR between GenParticle and SimTrack photon
+        float trackEta = phoTk->momentum().eta();
+        float trackPhi = phoTk->momentum().phi();
+        float dEta = eta - trackEta;
+        float dPhi = phi - trackPhi;
+        // Wrap dphi to [-pi, pi]
+        while (dPhi > M_PI) dPhi -= 2*M_PI;
+        while (dPhi < -M_PI) dPhi += 2*M_PI;
+        float dR = sqrt(dEta*dEta + dPhi*dPhi);
+        
+        std::cout << "    Matching: GenPhoton(eta=" << eta << ",phi=" << phi 
+                  << ") vs SimTrack " << phoTk->trackId() << "(eta=" << trackEta 
+                  << ",phi=" << trackPhi << ") dR=" << dR << std::endl;
+        
+        if (dR < minDR) {
+          minDR = dR;
+          bestTrackId = phoTk->trackId();
+        }
+      }
+      std::cout << "  Best match: trackId=" << bestTrackId << " with dR=" << minDR << std::endl;
+      
+      // Now check if the matched photon has conversion info
+      if (bestTrackId > 0 && photonConversionInfo.find(bestTrackId) != photonConversionInfo.end()) {
+        const auto& convInfo = photonConversionInfo[bestTrackId];
         if (convInfo.first > 0 || convInfo.second != 0) {
           isConverted = 1;
           convR = convInfo.first;
           convZ = convInfo.second;
           std::cout << "  -> Converted at R=" << convR << ", Z=" << convZ << std::endl;
-          break; // Take first converted photon
         }
       }
     }
@@ -263,7 +297,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
       for (const auto& hitAndFraction : hitAndFractions) {
           DetId hitId = hitAndFraction.first;
           EBDetId ebid(hitId);
-          std::cout << "    SimHit ieta: " << ebid.ieta() << ", iphi: " << ebid.iphi() << std::endl;
+          //std::cout << "    SimHit ieta: " << ebid.ieta() << ", iphi: " << ebid.iphi() << std::endl;
           // Store all sc_numbers associated with this (ieta, iphi) pair
           caloMap[std::make_pair(ebid.ieta(), ebid.iphi())].push_back(sc_number);
           nsimhits++;
@@ -381,16 +415,26 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 
   // **************** Loop over the PFClusters ****************
 
+  //geo = &iSetup.getData(ecalGeometryToken);
+  //barrelGeom = (geo->getSubdetectorGeometry(DetId::Ecal, EcalBarrel));
+  //barrelGeom = iSetup.getData(barrelGeomToken);
+  const auto &barrelGeom = iSetup.getData(barrelGeomToken);
+
   for (const auto& pf : *pfClusters)
   {
-    DetId ebid = pf.seed();
-    EBDetId ebdetid(ebid);
+    //DetId ebid = pf.seed();
+    //EBDetId ebdetid(ebid);
     pfEvent.push_back(iEvent.id().event());
-    pfEta.push_back(ebdetid.ieta());
-    pfPhi.push_back(ebdetid.iphi());
     pfE.push_back(pf.correctedEnergy());
-    std::cout << " PFCluster E=" << pf.correctedEnergy() << " at (" 
-    << ebdetid.ieta() << ", " << ebdetid.iphi() << ")" << std::endl;
+
+    GlobalPoint gp(pf.position().x(), pf.position().y(), pf.position().z());
+    DetId closestCell = barrelGeom.getClosestCell(gp);
+    EBDetId ebid(closestCell);
+
+    pfEta.push_back(ebid.ieta());
+    pfPhi.push_back(ebid.iphi());
+
+    std::cout << " PFCluster E=" << pf.correctedEnergy() << " at (" << ebid.ieta() << ", " << ebid.iphi() << ")" << std::endl;
   }
 
 } // --- end of analyze

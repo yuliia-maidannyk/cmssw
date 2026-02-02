@@ -40,6 +40,11 @@
 #include "SimDataFormats/CaloAnalysis/interface/SimClusterFwd.h"
 #include "SimDataFormats/GeneratorProducts/interface/HepMCProduct.h"
 
+#include "Geometry/CaloGeometry/interface/CaloGeometry.h"
+#include "Geometry/Records/interface/CaloGeometryRecord.h"
+#include "Geometry/CaloGeometry/interface/CaloSubdetectorGeometry.h"
+#include "Geometry/Records/interface/EcalBarrelGeometryRecord.h"
+
 #include <map>
 #include <vector>
 #include <TFile.h>
@@ -70,6 +75,9 @@ private:
   std::string ValidationCollection;
   std::string jobId;
 
+  const CaloGeometry* geo;
+  //const CaloSubdetectorGeometry* barrelGeom;
+
   edm::EDGetTokenT<edm::PCaloHitContainer> EBHitsToken;
   edm::EDGetTokenT<PEcalValidInfo> ValidationCollectionToken;
   edm::EDGetTokenT<reco::GenParticleCollection> genParticleToken;
@@ -80,6 +88,8 @@ private:
   edm::EDGetTokenT<EBRecHitCollection> EBrechitCollection_Token;
   edm::EDGetTokenT<CaloParticleCollection> CaloParticle_Token;
   edm::EDGetTokenT<edm::HepMCProduct> HepMCToken;
+  edm::ESGetToken<CaloSubdetectorGeometry, EcalBarrelGeometryRecord> barrelGeomToken;
+  edm::ESGetToken<CaloGeometry, CaloGeometryRecord> ecalGeometryToken;
 
   TFile* myFile;
   TTree* simTree;
@@ -139,9 +149,9 @@ private:
   std::vector<float> genConvZ;
 
   std::vector<int>    pfEvent;
-  std::vector<int>  pfPhi;
-  std::vector<int>  pfEta;
-  std::vector<double>  pfE;
+  std::vector<int>    pfPhi;
+  std::vector<int>    pfEta;
+  std::vector<double> pfE;
 
   std::map<unsigned, unsigned> geantToIndex_;
 };
