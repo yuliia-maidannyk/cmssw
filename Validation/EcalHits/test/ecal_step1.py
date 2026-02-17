@@ -11,9 +11,13 @@ import random
 parser = argparse.ArgumentParser(description="")
 parser.add_argument('--n', type=int, help="Number of events", default=444)
 parser.add_argument('--jobId', type=int, help="File number", default=444)
+parser.add_argument('--threads', type=int, help="Number of threads", default=os.cpu_count() or 1)
+parser.add_argument('--streams', type=int, help="Number of streams (0=auto)", default=0)
 args = parser.parse_args()
 print("Number of events: ", args.n)
 print("Job ID: ", args.jobId)
+print("Threads: ", args.threads)
+print("Streams: ", args.streams)
 
 from Configuration.Eras.Era_Phase2C17I13M9_cff import Phase2C17I13M9
 from Configuration.ProcessModifiers.dd4hep_cff import dd4hep
@@ -70,8 +74,8 @@ process.options = cms.untracked.PSet(
     modulesToIgnoreForDeleteEarly = cms.untracked.vstring(),
     numberOfConcurrentLuminosityBlocks = cms.untracked.uint32(0),
     numberOfConcurrentRuns = cms.untracked.uint32(1),
-    numberOfStreams = cms.untracked.uint32(0),
-    numberOfThreads = cms.untracked.uint32(1),
+    numberOfStreams = cms.untracked.uint32(args.streams),
+    numberOfThreads = cms.untracked.uint32(args.threads),
     printDependencies = cms.untracked.bool(False),
     sizeOfStackForThreadsInKB = cms.optional.untracked.uint32,
     throwIfIllegalParameter = cms.untracked.bool(True),
@@ -124,23 +128,11 @@ process.FEVTDEBUGoutput = cms.OutputModule("PoolOutputModule",
 
 # Additional output definition
 
+
 # Other statements
 process.genstepfilter.triggerConditions=cms.vstring("generation_step")
 from Configuration.AlCa.GlobalTag import GlobalTag
-process.GlobalTag = GlobalTag(process.GlobalTag, 'auto:phase2_realistic_T33_13TeV', '')
-
-# From saved file
-# process.RandomNumberGeneratorService = cms.Service("RandomNumberGeneratorService",
-#     VtxSmeared = cms.PSet(
-#         initialSeed = cms.untracked.uint32(581882)
-#     ),
-#     g4SimHits = cms.PSet(
-#         initialSeed = cms.untracked.uint32(466581)
-#     ),
-#     generator = cms.PSet(
-#         initialSeed = cms.untracked.uint32(912782)
-#     ),
-# )
+process.GlobalTag = GlobalTag(process.GlobalTag, '141X_mcRun4_realistic_v3', '')
 
 process.RandomNumberGeneratorService = cms.Service("RandomNumberGeneratorService",
     VtxSmeared = cms.PSet(
@@ -155,24 +147,63 @@ process.RandomNumberGeneratorService = cms.Service("RandomNumberGeneratorService
     saveFileName = cms.untracked.string('RandomEngineStates_' + str(args.jobId) + '.txt')
 )
 
-process.generator = cms.EDFilter("Pythia8PtGun",
+process.generator = cms.EDProducer("ManyParticleFlatRandomEGunProducer",
     PGunParameters = cms.PSet(
-        AddAntiParticle = cms.bool(False),
-        MaxEta = cms.double(1.479),
-        MaxPhi = cms.double(3.14159265359),
-        MaxPt = cms.double(100.0),
-        MinEta = cms.double(-1.479),
-        MinPhi = cms.double(-3.14159265359),
-        MinPt = cms.double(1.0),
-        ParticleID = cms.vint32(22)
+        PartID = cms.vint32(22,22),
+        MinEta = cms.vdouble(-1.479,0),
+        MaxEta = cms.vdouble(0,1.479),
+        MinPhi = cms.vdouble(-3.14159265359,-3.14159265359),
+        MaxPhi = cms.vdouble(3.14159265359,3.14159265359),
+        MinE = cms.vdouble(1.0,1.0),
+        MaxE = cms.vdouble(100.0,100.0),
     ),
-    PythiaParameters = cms.PSet(
-        parameterSets = cms.vstring()
-    ),
+    AddAntiParticle = cms.bool(False),
     Verbosity = cms.untracked.int32(100),
-    firstRun = cms.untracked.uint32(1),
-    psethack = cms.string('single gamma pt 1 to 100')
+    firstRun = cms.untracked.uint32(0),
+    psethack = cms.string('2 gammas energy 1 to 100')
 )
+
+# process.generator = cms.EDProducer("ManyParticleFlatRandomEGunProducer",
+#     PGunParameters = cms.PSet(
+#         PartID = cms.vint32(22),
+#         MinEta = cms.vdouble(0.605),
+#         MaxEta = cms.vdouble(0.605),
+#         MinPhi = cms.vdouble(2.620),
+#         MaxPhi = cms.vdouble(2.620),
+#         MinE = cms.vdouble(50.0),
+#         MaxE = cms.vdouble(50.0),
+#     ),
+#     AddAntiParticle = cms.bool(False),
+#     Verbosity = cms.untracked.int32(100),
+#     firstRun = cms.untracked.uint32(0),
+#     psethack = cms.string('1 gamma energy 50')
+# )
+
+# process.generator = cms.EDProducer("MultiParticleInConeGunProducer",
+#     PGunParameters = cms.PSet(
+#         PartID = cms.vint32(22),
+#         InConeID = cms.vint32(22),
+#         MinDeltaR = cms.double(0.012), # N * sqrt((0.0174)^2 + (pi/180)^2) with N=1,2,3...
+#         MaxDeltaR = cms.double(0.074), # N * sqrt((0.0174)^2 + (pi/180)^2) with N=1,2,3...
+#         MinMomRatio = cms.double(0.1),
+#         MaxMomRatio = cms.double(1.0),
+#         InConeMinEta = cms.double(-1.45),
+#         InConeMaxEta = cms.double(1.45),
+#         InConeMinPhi = cms.double(-3.1),
+#         InConeMaxPhi = cms.double(3.1),
+#         InConeMaxTry = cms.uint32(2),
+#         MinEta = cms.double(-1.45),
+#         MaxEta = cms.double(1.45),
+#         MinPhi = cms.double(-3.1),
+#         MaxPhi = cms.double(3.1),
+#         MinE = cms.double(1.0),
+#         MaxE = cms.double(100.0),
+#     ),
+#     AddAntiParticle = cms.bool(False),
+#     Verbosity = cms.untracked.int32(100),
+#     firstRun = cms.untracked.uint32(0),
+#     psethack = cms.string('2 gamma in cone energy 1 to 100')
+# )
 
 process.load('Validation.MtdValidation/btlClustering_cfi')
 process.load('Validation.EcalHits/transClustering_cfi')

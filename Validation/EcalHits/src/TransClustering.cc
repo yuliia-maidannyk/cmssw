@@ -1,17 +1,9 @@
-// #include "DataFormats/Common/interface/ValidHandle.h"
 #include "DataFormats/Math/interface/GeantUnits.h"
-// #include "DataFormats/FTLRecHit/interface/FTLRecHitCollections.h"
-// #include "DataFormats/FTLRecHit/interface/FTLClusterCollections.h"
-
-// #include "SimDataFormats/CrossingFrame/interface/CrossingFrame.h"
-// #include "SimDataFormats/CrossingFrame/interface/MixCollection.h"
-// #include "SimDataFormats/TrackingHit/interface/PSimHit.h"
-// #include "SimDataFormats/Vertex/interface/SimVertex.h"
-
 #include "DQMServices/Core/interface/DQMStore.h"
 #include "FWCore/Utilities/interface/Exception.h"
 #include <DataFormats/EcalDetId/interface/EBDetId.h>
 #include "Geometry/EcalAlgo/interface/EcalBarrelGeometry.h"
+#include "Calibration/IsolatedParticles/interface/DetIdFromEtaPhi.h"
 
 #include "Validation/EcalHits/interface/TransClustering.h"
 
@@ -25,7 +17,6 @@ TransClustering::TransClustering(const edm::ParameterSet& iConfig)
   EBrechitCollection_Token = consumes<EBRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBrechitCollection"));
   EBuncalibrechitCollection_Token = consumes<EBUncalibratedRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBuncalibrechitCollection"));
   EBHitsToken = consumes<edm::PCaloHitContainer>(edm::InputTag(std::string(g4InfoLabel), std::string(EBHitsCollection)));
-  //reducedBarrelRecHitToken = consumes<EcalRecHitCollection>(iConfig.getParameter<edm::InputTag>("reducedBarrelRecHitCollection"));
   ValidationCollectionToken = consumes<PEcalValidInfo>(edm::InputTag(std::string(g4InfoLabel), std::string(ValidationCollection)));
   genParticleToken = consumes<reco::GenParticleCollection>(iConfig.getParameter<edm::InputTag>("genParticles"));
   SimTrackToken = consumes<edm::SimTrackContainer>(iConfig.getParameter<edm::InputTag>("simTrackCollection"));
@@ -33,18 +24,11 @@ TransClustering::TransClustering(const edm::ParameterSet& iConfig)
   CaloParticle_Token = consumes<CaloParticleCollection>(iConfig.getParameter<edm::InputTag>("CaloParticleCollection"));
   HepMCToken = consumes<edm::HepMCProduct>(iConfig.getParameter<edm::InputTag>("HepMCProductLabel"));
   pfClusterToken = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECAL"));
-  //barrelGeomToken = consumes<CaloSubdetectorGeometry, EcalBarrelGeometryRecord>(iConfig.getParameter<edm::InputTag>("EcalBarrel"));
   barrelGeomToken = esConsumes<CaloSubdetectorGeometry, EcalBarrelGeometryRecord>(edm::ESInputTag("", "EcalBarrel"));
+  ecalGeomToken = esConsumes<CaloGeometry, CaloGeometryRecord>();
 }
 
 TransClustering::~TransClustering() {
-  simTree->Fill();
-  recoTree->Fill();
-  caloTree->Fill();
-  genTree->Fill();
-  pfTree->Fill();
-  myFile->Write();
-  myFile->Close();
 }
 
 // ------------ method called for each event  ------------
@@ -53,11 +37,21 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   using namespace std;
   using namespace geant_units::operators;
 
+  clearEventData();
+
   static unsigned long eventCount = 0;
   ++eventCount;
   if (eventCount % 100 == 0) {
     std::cout << "Processed " << eventCount << " events" << std::endl;
   }
+
+
+  // ***************** Get the Ecal Barrel Geometry *****************
+
+  const CaloGeometry& geo = iSetup.getData(ecalGeomToken);
+  const CaloSubdetectorGeometry& barrelGeom = iSetup.getData(barrelGeomToken);
+
+  // ***************** Get the collections *****************
 
   edm::Handle<edm::PCaloHitContainer> EcalHitsEB;
   iEvent.getByToken(EBHitsToken, EcalHitsEB);
@@ -80,28 +74,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 
   edm::Handle<edm::HepMCProduct> MCEvt;
   iEvent.getByToken(HepMCToken, MCEvt);
-  // if (!MCEvt.isValid()) {
-  //   edm::LogWarning("TransClustering") << "HepMCProduct not found!  Skipping HepMC processing.";
-  //   return;
-  // } 
-  // const HepMC::GenEvent* genEvent = MCEvt->GetEvent();
-  // if (!genEvent) {
-  //   edm::LogWarning("TransClustering") << "GenEvent is null! ";
-  //   return;
-  // }
 
-  // Match using indices
-  // for (const auto& cp : *caloParticles) {
-  //     for (auto g4t = cp.g4Track_begin(); g4t != cp.g4Track_end(); ++g4t) {
-  //         int g4TrackId = g4t->trackId();
-  //         // Match this to genParticle using genParticleIndices
-  //         if (g4t->genpartIndex() >= 0 && 
-  //             g4t->genpartIndex() < (int)genParticles->size()) {
-  //             const auto& matchedGenP = (*genParticles)[g4t->genpartIndex()];
-  //             std::cout << "Matched GenParticle: " << matchedGenP.pdgId() << std::endl;
-  //         }
-  //     }
-  // }
   edm::Handle<reco::PFClusterCollection> pfClusters;
   iEvent.getByToken(pfClusterToken, pfClusters);
 
@@ -153,7 +126,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 
   // For each photon, look for conversion electrons
   for (auto* phoTk : photonTracks) {
-    //bool converted = false;
     float convR = 0., convZ = 0.;
     
     for (auto& simTk : theSimTracks) {
@@ -170,8 +142,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
         if (association != geantToIndex_.end()) {
           int motherId = association->second;
           if (theSimTracks[motherId].trackId() == phoTk->trackId()) {
-            // This electron came from our photon
-            //converted = true;
             const math::XYZTLorentzVectorD &vtxPosition = vertex.position();
             convR = vtxPosition.pt();
             convZ = vtxPosition.z();
@@ -237,24 +207,40 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
       // Now check if the matched photon has conversion info
       if (bestTrackId > 0 && photonConversionInfo.find(bestTrackId) != photonConversionInfo.end()) {
         const auto& convInfo = photonConversionInfo[bestTrackId];
-        if (convInfo.first > 0 || convInfo.second != 0) {
-          isConverted = 1;
+        if ((convInfo.first > 0 || convInfo.second != 0)) {
           convR = convInfo.first;
           convZ = convInfo.second;
+          if (convInfo.first < 129) {isConverted = 1;}
           std::cout << "  -> Converted at R=" << convR << ", Z=" << convZ << std::endl;
         }
       }
     }
+
+    // Calculate position on ECAL surface
+    double ECAL_RADIUS = 129.0; // cm
+
+    double theta = 2.0 * std::atan(std::exp(-eta));
+    double x = ECAL_RADIUS * std::cos(phi);
+    double y = ECAL_RADIUS * std::sin(phi);
+    double z = ECAL_RADIUS / std::tan(theta);
+
+    GlobalPoint ecalPoint(x, y, z);
+    DetId closestCell = barrelGeom.getClosestCell(ecalPoint);
+    EBDetId cpEBid(closestCell);
+
+    std::cout << "  GenParticle momentum points to: ieta=" << cpEBid.ieta() 
+              << " iphi=" << cpEBid.iphi() << std::endl;
     
     genEvent.push_back(iEvent.id().event());
-    genT.push_back(0.0);  // genParticle doesn't have a time, so set to 0
     genPDG.push_back(pdgId);
     genSourceX.push_back(vx);
     genSourceY.push_back(vy);
     genSourceZ.push_back(vz);
-    genEta.push_back(eta);
-    genPhi.push_back(phi);
-    genPt.push_back(pt);
+    genPEta.push_back(eta);
+    genPPhi.push_back(phi);
+    genPPt.push_back(pt);
+    genEta.push_back(cpEBid.ieta());
+    genPhi.push_back(cpEBid.iphi());
     genE.push_back(energy);
     genIsConverted.push_back(isConverted);
     genConvR.push_back(convR);
@@ -281,37 +267,54 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 
       caloPDG.push_back(sc->pdgId());
       caloE.push_back(sc->energy());
-      caloEta.push_back(sc->eta());
-      caloPhi.push_back(sc->phi());
-      caloPt.push_back(sc->pt());
+      caloPEta.push_back(sc->eta());
+      caloPPhi.push_back(sc->phi());
+      caloPPt.push_back(sc->pt());
       caloTrackId.push_back(sc->g4Track_begin()->trackId());
       caloEvent.push_back(iEvent.id().event());
 
-      // for (auto g4Track = simCluster->g4Track_begin(); g4Track != simCluster->g4Track_end(); ++g4Track) {
-      //   std::cout << "    G4Track: type=" << g4Track->type() 
-      //                   << " E=" << g4Track->momentum().E() << std::endl;
-      // }
+      // Calculate position on ECAL surface
+      double cpEta = sc->eta();
+      double cpPhi = sc->phi();
+      double ECAL_RADIUS = 129.0; // cm
+
+      double theta = 2.0 * std::atan(std::exp(-cpEta));
+      double x = ECAL_RADIUS * std::cos(cpPhi);
+      double y = ECAL_RADIUS * std::sin(cpPhi);
+      double z = ECAL_RADIUS / std::tan(theta);
+
+      GlobalPoint ecalPoint(x, y, z);
+      DetId closestCell = barrelGeom.getClosestCell(ecalPoint);
+      EBDetId cpEBid(closestCell);
+
+      std::cout << "  CaloParticle momentum points to: ieta=" << cpEBid.ieta() 
+                << " iphi=" << cpEBid.iphi() << std::endl;
+
+      caloEta.push_back(cpEBid.ieta());
+      caloPhi.push_back(cpEBid.iphi());
 
       // Get the sim hits associated with this sim cluster
-      const auto& hitAndFractions = sc->hits_and_fractions();
-      for (const auto& hitAndFraction : hitAndFractions) {
-          DetId hitId = hitAndFraction.first;
+        const auto& hitAndEnergies = sc->hits_and_energies();
+        for (const auto& hitAndEnergy : hitAndEnergies) {
+          DetId hitId = hitAndEnergy.first;
           EBDetId ebid(hitId);
           //std::cout << "    SimHit ieta: " << ebid.ieta() << ", iphi: " << ebid.iphi() << std::endl;
-          // Store all sc_numbers associated with this (ieta, iphi) pair
-          caloMap[std::make_pair(ebid.ieta(), ebid.iphi())].push_back(sc_number);
+          // Store all (sc_number, simhit energy) associated with this (ieta, iphi) pair
+          float simHitEnergy = hitAndEnergy.second;
+          caloMap[std::make_pair(ebid.ieta(), ebid.iphi())].push_back(std::make_pair(sc_number, simHitEnergy));
           nsimhits++;
-      }
+        }
       sc_number++;
     }
     std::cout << "CaloParticle has " << nsimhits << " associated sim hits." << std::endl;
   }
 
   for (const auto& [key, scNumbers] : caloMap) {
-    for (int scNum : scNumbers) {
+    for (const auto& scNumAndE : scNumbers) {
       caloIEta.push_back(key.first);
       caloIPhi.push_back(key.second);
-      caloValues.push_back(scNum);
+      caloValues.push_back(scNumAndE.first);
+      caloValuesE.push_back(scNumAndE.second);
       caloSubEvent.push_back(iEvent.id().event());
     }
   }
@@ -354,24 +357,16 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   std::cout << "Number of EB sim hits: " << nEBHits << std::endl;
   std::cout << "Total EB sim energy: " << EBEnergy_ << std::endl;
 
-  float max_energy = 0.;
-  std::pair<int, int> max_pos;
   for (const auto& [key, val] : simMap) {
     simIEta.push_back(key.first);
     simIPhi.push_back(key.second);
     simValues.push_back(val);
-    if (val > max_energy) {
-      max_pos.first = key.first;
-      max_pos.second = key.second;
-    }
-    max_energy = val;
     simSubEvent.push_back(iEvent.id().event());
   }
 
   // **************** Loop over the EB REC hits ****************
 
   MapType recoMap;
-  EBEnergy_ = 0.;
   nEBHits = 0;
 
   for (EcalRecHitCollection::const_iterator recHit = EBRecHit->begin(); recHit != EBRecHit->end(); ++recHit) {
@@ -379,11 +374,9 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     int ieta = ebid.ieta();
     int iphi = ebid.iphi();
     recoMap[std::make_pair(ieta, iphi)] += recHit->energy();
-    EBEnergy_ += recHit->energy();
     nEBHits++;
   }
   std::cout << "Number of EB rec hits: " << nEBHits << std::endl;
-  // std::cout << "Total EB rec energy: " << EBEnergy_ << std::endl;
 
   for (const auto& [key, val] : recoMap) {
     recoIEta.push_back(key.first);
@@ -392,33 +385,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     recoEvent.push_back(iEvent.id().event());
   }
 
-  // Sum rec hit energy in 7x7 region around the max_pos
-  float recoE_7x7 = 0.;
-  for (int dEta = -3; dEta <= 3; ++dEta) {
-      int ieta = max_pos.first + dEta;
-      // EB ieta ranges from -85 to 85, skipping 0
-      if (ieta == 0 || ieta < -85 || ieta > 85) continue;
-      for (int dPhi = -3; dPhi <= 3; ++dPhi) {
-          int iphi = max_pos.second + dPhi;
-          // Wrap iphi around [1,360]
-          if (iphi < 1) iphi += 360;
-          if (iphi > 360) iphi -= 360;
-          auto it = recoMap.find({ieta, iphi});
-          if (it != recoMap.end()) {
-              recoE_7x7 += it->second;
-          }
-      }
-  }
-  std::cout << std::endl;
-  std::cout << "RecHit energy in 7x7 region around the maximum: " << recoE_7x7 << std::endl;
-  std::cout << std::endl;
-
   // **************** Loop over the PFClusters ****************
-
-  //geo = &iSetup.getData(ecalGeometryToken);
-  //barrelGeom = (geo->getSubdetectorGeometry(DetId::Ecal, EcalBarrel));
-  //barrelGeom = iSetup.getData(barrelGeomToken);
-  const auto &barrelGeom = iSetup.getData(barrelGeomToken);
 
   for (const auto& pf : *pfClusters)
   {
@@ -430,14 +397,101 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     GlobalPoint gp(pf.position().x(), pf.position().y(), pf.position().z());
     DetId closestCell = barrelGeom.getClosestCell(gp);
     EBDetId ebid(closestCell);
+    int ieta = ebid.ieta();
+    int iphi = ebid.iphi();
 
-    pfEta.push_back(ebid.ieta());
-    pfPhi.push_back(ebid.iphi());
+    // double exact_eta = gp.eta();
+    // double exact_phi = gp.phi().value();
+    
+    // // Get crystal center position
+    // GlobalPoint cellCenter = barrelGeom.getGeometry(closestCell)->getPosition();
 
-    std::cout << " PFCluster E=" << pf.correctedEnergy() << " at (" << ebid.ieta() << ", " << ebid.iphi() << ")" << std::endl;
+    // // Calculate fractional offset from crystal center
+    // double deltaEta = exact_eta - cellCenter.eta();
+    // double deltaPhi = exact_phi - cellCenter.phi().value();
+    
+    // // Wrap deltaPhi to [-π, π]
+    // while (deltaPhi > M_PI) deltaPhi -= 2*M_PI;
+    // while (deltaPhi < -M_PI) deltaPhi += 2*M_PI;
+
+    // double ieta_fractional = ieta + deltaEta / 0.0174;
+    // double iphi_fractional = iphi + deltaPhi / (2.0 * M_PI / 360.0);
+
+    pfEta.push_back(ieta);
+    pfPhi.push_back(iphi);
+
+    std::cout << " PFCluster E=" << pf.correctedEnergy() << " at (" << ieta << ", " << iphi << ")" << std::endl;
   }
 
+  simTree->Fill();
+  recoTree->Fill();
+  caloTree->Fill();
+  genTree->Fill();
+  pfTree->Fill();
+
 } // --- end of analyze
+
+void TransClustering::clearEventData() {
+  simPDG.clear();
+  simT.clear();
+  simE.clear();
+  simPhi.clear();
+  simEta.clear();
+  simZ.clear();
+  simEvent.clear();
+  simSubEvent.clear();
+  simTrackId.clear();
+  simIEta.clear();
+  simIPhi.clear();
+  simValues.clear();
+
+  recoT.clear();
+  recoE.clear();
+  recoPhi.clear();
+  recoEta.clear();
+  recoEvent.clear();
+  recoID.clear();
+  recoIEta.clear();
+  recoIPhi.clear();
+  recoValues.clear();
+
+  caloT.clear();
+  caloE.clear();
+  caloPPt.clear();
+  caloPPhi.clear();
+  caloPEta.clear();
+  caloEta.clear();
+  caloPhi.clear();
+  caloPDG.clear();
+  caloEvent.clear();
+  caloSubEvent.clear();
+  caloIEta.clear();
+  caloIPhi.clear();
+  caloValues.clear();
+  caloValuesE.clear();
+  caloTrackId.clear();
+
+  genT.clear();
+  genE.clear();
+  genPPt.clear();
+  genPPhi.clear();
+  genPEta.clear();
+  genEta.clear();
+  genPhi.clear();
+  genPDG.clear();
+  genEvent.clear();
+  genSourceX.clear();
+  genSourceY.clear();
+  genSourceZ.clear();
+  genIsConverted.clear();
+  genConvR.clear();
+  genConvZ.clear();
+
+  pfEvent.clear();
+  pfPhi.clear();
+  pfEta.clear();
+  pfE.clear();
+}
 
 // ------------ helper method for photon conversion tracking ------------
 void TransClustering::fillMcTruth(std::vector<SimTrack> &simTracks, std::vector<SimVertex> &simVertices) {
@@ -455,13 +509,9 @@ void TransClustering::fillMcTruth(std::vector<SimTrack> &simTracks, std::vector<
 void TransClustering::bookHistograms(DQMStore::IBooker& ibook, edm::Run const& run, edm::EventSetup const& iSetup) {
   ibook.setCurrentFolder("EcalHitsV/EcalSimHitsValidation");
 
-  // Create a file with jobId
-  std::stringstream ss;
-  ss << "ecal_" << jobId << ".root";
-  std::string filename = ss.str();
-  myFile = new TFile(filename.c_str(), "RECREATE");
-  
-  simTree = new TTree("simTree", "A tree with simulation hit information");
+  edm::Service<TFileService> fs;
+
+  simTree = fs->make<TTree>("simTree", "A tree with simulation hit information");
   simTree->Branch("pdg",        &simPDG);
   simTree->Branch("time",       &simT);
   simTree->Branch("energy",     &simE);
@@ -474,7 +524,7 @@ void TransClustering::bookHistograms(DQMStore::IBooker& ibook, edm::Run const& r
   simTree->Branch("mapIPhi",    &simIPhi);
   simTree->Branch("mapValues",  &simValues);
 
-  recoTree = new TTree("recoTree", "A tree with reconstructed hit information");
+  recoTree = fs->make<TTree>("recoTree", "A tree with reconstructed hit information");
   recoTree->Branch("time",      &recoT);
   recoTree->Branch("energy",    &recoE);
   recoTree->Branch("phi",       &recoPhi);
@@ -484,26 +534,31 @@ void TransClustering::bookHistograms(DQMStore::IBooker& ibook, edm::Run const& r
   recoTree->Branch("mapIPhi",   &recoIPhi);
   recoTree->Branch("mapValues", &recoValues);
 
-  caloTree = new TTree("caloTree", "A tree with calo hit information");
+  caloTree = fs->make<TTree>("caloTree", "A tree with calo hit information");
   caloTree->Branch("time",      &caloT);
   caloTree->Branch("energy",    &caloE);
-  caloTree->Branch("pt",        &caloPt);
-  caloTree->Branch("phi",       &caloPhi);
-  caloTree->Branch("eta",       &caloEta);
+  caloTree->Branch("pt",        &caloPPt);
+  caloTree->Branch("phi",       &caloPPhi);
+  caloTree->Branch("eta",       &caloPEta);
+  caloTree->Branch("iphi",      &caloPhi);
+  caloTree->Branch("ieta",      &caloEta);
   caloTree->Branch("pdg",       &caloPDG);
   caloTree->Branch("event",     &caloEvent);
   caloTree->Branch("subEvent",  &caloSubEvent);
   caloTree->Branch("mapIEta",   &caloIEta);
   caloTree->Branch("mapIPhi",   &caloIPhi);
   caloTree->Branch("mapValues", &caloValues);
+  caloTree->Branch("mapValuesE", &caloValuesE);
   caloTree->Branch("trackId",   &caloTrackId);
 
-  genTree = new TTree("genTree", "A tree with gen information");
+  genTree = fs->make<TTree>("genTree", "A tree with gen information");
   genTree->Branch("time",        &genT);
   genTree->Branch("energy",      &genE);
-  genTree->Branch("pt",          &genPt);
-  genTree->Branch("phi",         &genPhi);
-  genTree->Branch("eta",         &genEta);
+  genTree->Branch("pt",          &genPPt);
+  genTree->Branch("phi",         &genPPhi);
+  genTree->Branch("eta",         &genPEta);
+  genTree->Branch("iphi",        &genPhi);
+  genTree->Branch("ieta",        &genEta);
   genTree->Branch("pdg",         &genPDG);
   genTree->Branch("sourceX",     &genSourceX);
   genTree->Branch("sourceY",     &genSourceY);
@@ -513,7 +568,7 @@ void TransClustering::bookHistograms(DQMStore::IBooker& ibook, edm::Run const& r
   genTree->Branch("convR",       &genConvR);
   genTree->Branch("convZ",       &genConvZ);
 
-  pfTree = new TTree("pfTree", "A tree with PFCluster information");
+  pfTree = fs->make<TTree>("pfTree", "A tree with PFCluster information");
   pfTree->Branch("energy", &pfE);
   pfTree->Branch("eta",    &pfEta);
   pfTree->Branch("phi",    &pfPhi);

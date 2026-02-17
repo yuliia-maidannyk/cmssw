@@ -9,12 +9,19 @@ from Configuration.Eras.Era_Phase2C17I13M9_cff import Phase2C17I13M9
 from Configuration.ProcessModifiers.dd4hep_cff import dd4hep
 
 import argparse
+import os
 parser = argparse.ArgumentParser(description="")
 parser.add_argument('--n', type=int, help="Number of events", default=444)
 parser.add_argument('--jobId', type=int, help="File number", default=444)
+parser.add_argument('--threads', type=int, help="Number of threads", default=os.cpu_count() or 1)
+parser.add_argument('--streams', type=int, help="Number of streams (0=auto)", default=0)
+parser.add_argument('--pileup', type=int, help="Enable pileup mode", default=0)
 args = parser.parse_args()
 print("Number of events: ", args.n)
 print("Job ID: ", args.jobId)
+print("Threads: ", args.threads)
+print("Streams: ", args.streams)
+print("Pileup: ", args.pileup)
 
 process = cms.Process('RECO',Phase2C17I13M9,dd4hep)
 
@@ -23,7 +30,10 @@ process.load('Configuration.StandardSequences.Services_cff')
 process.load('SimGeneral.HepPDTESSource.pythiapdt_cfi') # REQUIRED for HepMC
 process.load('FWCore.MessageService.MessageLogger_cfi')
 process.load('Configuration.EventContent.EventContent_cff')
-process.load('SimGeneral.MixingModule.mixNoPU_cfi')
+if args.pileup == 0:
+    process.load('SimGeneral.MixingModule.mixNoPU_cfi') # no pileup
+else:
+    process.load('SimGeneral.MixingModule.mix_POISSON_average_cfi') # with pileup
 process.load('Configuration.Geometry.GeometryDD4hepExtendedRun4D110Reco_cff')
 process.load('Configuration.StandardSequences.MagneticField_cff')
 process.load('Configuration.StandardSequences.RawToDigi_cff')
@@ -83,8 +93,8 @@ process.options = cms.untracked.PSet(
     modulesToIgnoreForDeleteEarly = cms.untracked.vstring(),
     numberOfConcurrentLuminosityBlocks = cms.untracked.uint32(0),
     numberOfConcurrentRuns = cms.untracked.uint32(1),
-    numberOfStreams = cms.untracked.uint32(0),
-    numberOfThreads = cms.untracked.uint32(1),
+    numberOfStreams = cms.untracked.uint32(args.streams),
+    numberOfThreads = cms.untracked.uint32(args.threads),
     printDependencies = cms.untracked.bool(False),
     sizeOfStackForThreadsInKB = cms.optional.untracked.uint32,
     throwIfIllegalParameter = cms.untracked.bool(True),
@@ -98,101 +108,46 @@ process.configurationMetadata = cms.untracked.PSet(
     version = cms.untracked.string('$Revision: 1.19 $')
 )
 
+# ROOT output (thread-safe via TFileService)
+process.TFileService = cms.Service(
+    "TFileService",
+    fileName = cms.string(f'ecal_{args.jobId}.root')
+)
+
 # Output definition
-
-# process.FEVTDEBUGHLToutput = cms.OutputModule("PoolOutputModule",
-#     dataset = cms.untracked.PSet(
-#         dataTier = cms.untracked.string('GEN-SIM-RECO'),
-#         filterName = cms.untracked.string('')
-#     ),
-#     fileName = cms.untracked.string(f'file:step3_{args.jobId}.root'),
-#     outputCommands = process.FEVTDEBUGHLTEventContent.outputCommands,
-#     splitLevel = cms.untracked.int32(0)
-# )
-
-# process.MINIAODSIMoutput = cms.OutputModule("PoolOutputModule",
-#     compressionAlgorithm = cms.untracked.string('LZMA'),
-#     compressionLevel = cms.untracked.int32(4),
-#     dataset = cms.untracked.PSet(
-#         dataTier = cms.untracked.string('MINIAODSIM'),
-#         filterName = cms.untracked.string('')
-#     ),
-#     dropMetaData = cms.untracked.string('ALL'),
-#     eventAutoFlushCompressedSize = cms.untracked.int32(-900),
-#     fastCloning = cms.untracked.bool(False),
-#     fileName = cms.untracked.string('file:step3_3_inMINIAODSIM.root'),
-#     outputCommands = process.MINIAODSIMEventContent.outputCommands,
-#     overrideBranchesSplitLevel = cms.untracked.VPSet(
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('patPackedCandidates_packedPFCandidates__*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('recoGenParticles_prunedGenParticles__*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('patTriggerObjectStandAlones_slimmedPatTrigger__*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('patPackedGenParticles_packedGenParticles__*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('patJets_slimmedJets__*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('recoVertexs_offlineSlimmedPrimaryVertices__*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('recoVertexs_offlineSlimmedPrimaryVerticesWithBS__*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('recoCaloClusters_reducedEgamma_reducedESClusters_*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('EcalRecHitsSorted_reducedEgamma_reducedEBRecHits_*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('EcalRecHitsSorted_reducedEgamma_reducedEERecHits_*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('recoGenJets_slimmedGenJets__*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('patJets_slimmedJetsPuppi__*'),
-#             splitLevel = cms.untracked.int32(99)
-#         ),
-#         cms.untracked.PSet(
-#             branch = cms.untracked.string('EcalRecHitsSorted_reducedEgamma_reducedESRecHits_*'),
-#             splitLevel = cms.untracked.int32(99)
-#         )
-#     ),
-#     overrideInputFileSplitLevels = cms.untracked.bool(True),
-#     splitLevel = cms.untracked.int32(0)
-# )
-
-# process.DQMoutput = cms.OutputModule("DQMRootOutputModule",
-#     dataset = cms.untracked.PSet(
-#         dataTier = cms.untracked.string('DQMIO'),
-#         filterName = cms.untracked.string('')
-#     ),
-#     fileName = cms.untracked.string(f'file:step3_{args.jobId}_inDQM.root'),
-#     outputCommands = process.DQMEventContent.outputCommands,
-#     splitLevel = cms.untracked.int32(0)
-# )
 
 # Additional output definition
 #process.btlClustering.jobId = f'{args.jobId}'
 process.transClustering.jobId = f'{args.jobId}'
+
+# Add pileup
+if args.pileup:
+    process.mix.input.nbPileupEvents.averageNumber = cms.double(200.000000)
+    process.mix.bunchspace = cms.int32(25)
+    process.mix.minBunch = cms.int32(-3)
+    process.mix.maxBunch = cms.int32(3)
+    # process.mix.input.fileNames = cms.untracked.vstring([
+    #     '/store/relval/CMSSW_14_1_0/RelValMinBias_14TeV/GEN-SIM/141X_mcRun4_realistic_v1_STD_RegeneratedGS_2026D110_noPU-v1/2580000/040dcdc7-6ea6-4ef9-bf3e-bf6575a033d9.root', 
+    #     '/store/relval/CMSSW_14_1_0/RelValMinBias_14TeV/GEN-SIM/141X_mcRun4_realistic_v1_STD_RegeneratedGS_2026D110_noPU-v1/2580000/09a4d033-f954-48a8-8ef0-6e4f0ec12aa6.root', 
+    #     '/store/relval/CMSSW_14_1_0/RelValMinBias_14TeV/GEN-SIM/141X_mcRun4_realistic_v1_STD_RegeneratedGS_2026D110_noPU-v1/2580000/44fb52e6-65c4-4b51-82cf-6c32528d27f0.root', 
+    #     '/store/relval/CMSSW_14_1_0/RelValMinBias_14TeV/GEN-SIM/141X_mcRun4_realistic_v1_STD_RegeneratedGS_2026D110_noPU-v1/2580000/5ce8f333-4f0f-4ff9-a2be-6e8222d198d8.root', 
+    #     '/store/relval/CMSSW_14_1_0/RelValMinBias_14TeV/GEN-SIM/141X_mcRun4_realistic_v1_STD_RegeneratedGS_2026D110_noPU-v1/2580000/60d921f4-da81-4e14-9610-932e30a920a3.root', 
+    #     '/store/relval/CMSSW_14_1_0/RelValMinBias_14TeV/GEN-SIM/141X_mcRun4_realistic_v1_STD_RegeneratedGS_2026D110_noPU-v1/2580000/94d74ef9-616a-420b-9669-6eeda4c71d4a.root', 
+    #     '/store/relval/CMSSW_14_1_0/RelValMinBias_14TeV/GEN-SIM/141X_mcRun4_realistic_v1_STD_RegeneratedGS_2026D110_noPU-v1/2580000/b3424ef2-5c7b-43a1-b7d8-02270db82ad7.root', 
+    #     '/store/relval/CMSSW_14_1_0/RelValMinBias_14TeV/GEN-SIM/141X_mcRun4_realistic_v1_STD_RegeneratedGS_2026D110_noPU-v1/2580000/cfc6c8ad-7a13-4676-8111-1ef765f393b6.root', 
+    #     '/store/relval/CMSSW_14_1_0/RelValMinBias_14TeV/GEN-SIM/141X_mcRun4_realistic_v1_STD_RegeneratedGS_2026D110_noPU-v1/2580000/e57f9a76-5eaf-4e5a-a0dc-d686e82076b2.root'
+    # ])
+    process.mix.input.fileNames = cms.untracked.vstring([
+        'file:/feynman/home/dphp/ym280958/scratch/CMSSW_15_1_0_pre1/work/minbias_pu200/0207b889-4022-4139-bd59-077e9be69ca4.root',
+        'file:/feynman/home/dphp/ym280958/scratch/CMSSW_15_1_0_pre1/work/minbias_pu200/04a0e24a-1698-4186-9fc3-da7178ef5275.root',
+        'file:/feynman/home/dphp/ym280958/scratch/CMSSW_15_1_0_pre1/work/minbias_pu200/092059e6-1787-4ae4-8fd3-26731a7ffd3c.root',
+        'file:/feynman/home/dphp/ym280958/scratch/CMSSW_15_1_0_pre1/work/minbias_pu200/0bad8446-d125-46a8-a2a6-d1d384869877.root',
+        'file:/feynman/home/dphp/ym280958/scratch/CMSSW_15_1_0_pre1/work/minbias_pu200/0eaa4db2-77a7-4830-adc4-98640e028347.root',
+        'file:/feynman/home/dphp/ym280958/scratch/CMSSW_15_1_0_pre1/work/minbias_pu200/152b33de-b07e-4736-a203-7b37a05e7847.root',
+        'file:/feynman/home/dphp/ym280958/scratch/CMSSW_15_1_0_pre1/work/minbias_pu200/19ceddd9-e274-4a38-b064-932b8c261fcc.root',
+        'file:/feynman/home/dphp/ym280958/scratch/CMSSW_15_1_0_pre1/work/minbias_pu200/1cf3e2b5-7643-4538-af06-f859f4b6d927.root',
+        'file:/feynman/home/dphp/ym280958/scratch/CMSSW_15_1_0_pre1/work/minbias_pu200/1cfddd24-fd40-4114-9c80-e836338bb297.root'
+    ])
 
 # Other statements
 process.mix.playback = True
@@ -200,13 +155,12 @@ process.mix.digitizers = cms.PSet()
 for a in process.aliases: delattr(process, a)
 process.RandomNumberGeneratorService.restoreStateLabel=cms.untracked.string("randomEngineStateProducer")
 from Configuration.AlCa.GlobalTag import GlobalTag
-process.GlobalTag = GlobalTag(process.GlobalTag, 'auto:phase2_realistic_T33', '')
+process.GlobalTag = GlobalTag(process.GlobalTag, '141X_mcRun4_realistic_v3', '')
 
 # Path and EndPath definitions
 process.raw2digi_step = cms.Path(process.RawToDigi)
 process.reconstruction_step = cms.Path(process.reconstruction)
 process.recosim_step = cms.Path(process.recosim)
-#process.prevalidation_step = cms.Path(process.baseCommonPreValidation)
 # Modify the validation step to include generatorSmeared BEFORE validation
 process.prevalidation_step = cms.Path(
     process.generatorSmeared *     # ADD THIS - create HepMC product first

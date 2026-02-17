@@ -11,8 +11,10 @@
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
 #include "FWCore/ParameterSet/interface/ParameterSet.h"
 
-#include "DQMServices/Core/interface/DQMEDAnalyzer.h"
+#include "DQMServices/Core/interface/DQMOneEDAnalyzer.h"
 #include "DQMServices/Core/interface/DQMStore.h"
+#include "CommonTools/UtilAlgos/interface/TFileService.h"
+#include "FWCore/ServiceRegistry/interface/Service.h"
 
 #include "DataFormats/HepMCCandidate/interface/GenParticle.h"
 #include "DataFormats/HepMCCandidate/interface/GenParticleFwd.h"
@@ -51,9 +53,9 @@
 #include <TTree.h>
 #include <string>
 
-class TransClustering : public DQMEDAnalyzer {
+class TransClustering : public DQMOneEDAnalyzer<> {
   typedef std::map<std::pair<int, int>, float> MapType;
-  typedef std::map<std::pair<int, int>, std::vector<int>> CaloMapType;
+  typedef std::map<std::pair<int, int>, std::vector<std::pair<int, float>>> CaloMapType;
 
 public:
   typedef dqm::legacy::DQMStore DQMStore;
@@ -64,19 +66,17 @@ public:
 protected: 
   void bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::EventSetup const&) override;
 
-  float ecalEta(float EtaParticle, float Zvertex, float plane_Radius);
   void fillMcTruth(std::vector<SimTrack> &simTracks, std::vector<SimVertex> &simVertices);
 
   void analyze(const edm::Event&, const edm::EventSetup&) override;
+
+  void clearEventData();
 
 private:
   std::string g4InfoLabel;
   std::string EBHitsCollection;
   std::string ValidationCollection;
   std::string jobId;
-
-  const CaloGeometry* geo;
-  //const CaloSubdetectorGeometry* barrelGeom;
 
   edm::EDGetTokenT<edm::PCaloHitContainer> EBHitsToken;
   edm::EDGetTokenT<PEcalValidInfo> ValidationCollectionToken;
@@ -89,9 +89,8 @@ private:
   edm::EDGetTokenT<CaloParticleCollection> CaloParticle_Token;
   edm::EDGetTokenT<edm::HepMCProduct> HepMCToken;
   edm::ESGetToken<CaloSubdetectorGeometry, EcalBarrelGeometryRecord> barrelGeomToken;
-  edm::ESGetToken<CaloGeometry, CaloGeometryRecord> ecalGeometryToken;
+  edm::ESGetToken<CaloGeometry, CaloGeometryRecord> ecalGeomToken;
 
-  TFile* myFile;
   TTree* simTree;
   TTree* recoTree;
   TTree* caloTree;
@@ -123,22 +122,27 @@ private:
 
   std::vector<float>    caloT;
   std::vector<float>    caloE;
-  std::vector<float>    caloPt;
-  std::vector<float>    caloPhi;
-  std::vector<float>    caloEta;
+  std::vector<float>    caloPPt;
+  std::vector<float>    caloPPhi;
+  std::vector<float>    caloPEta;
+  std::vector<int>      caloEta;
+  std::vector<int>      caloPhi;
   std::vector<float>    caloPDG;
   std::vector<int>      caloEvent;
   std::vector<int>      caloSubEvent;
   std::vector<int>      caloIEta;
   std::vector<int>      caloIPhi;
   std::vector<int>      caloValues;
+  std::vector<float>    caloValuesE;
   std::vector<uint64_t> caloTrackId;
 
   std::vector<float> genT;
   std::vector<float> genE;
-  std::vector<float> genPt;
-  std::vector<float> genPhi;
-  std::vector<float> genEta;
+  std::vector<float> genPPt;
+  std::vector<float> genPPhi;
+  std::vector<float> genPEta;
+  std::vector<int>   genEta;
+  std::vector<int>   genPhi;
   std::vector<int>   genPDG;
   std::vector<int>   genEvent;
   std::vector<float> genSourceX;

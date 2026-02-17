@@ -23,8 +23,8 @@ MultiParticleInConeGunProducer::MultiParticleInConeGunProducer(const ParameterSe
   ParameterSet defpset;
   ParameterSet pgun_params = pset.getParameter<ParameterSet>("PGunParameters");
 
-  fMinPt = pgun_params.getParameter<double>("MinPt");
-  fMaxPt = pgun_params.getParameter<double>("MaxPt");
+  fMinE = pgun_params.getParameter<double>("MinE");
+  fMaxE = pgun_params.getParameter<double>("MaxE");
 
   fInConeIds = pgun_params.getParameter<vector<int> >("InConeID");
   fMinDeltaR = pgun_params.getParameter<double>("MinDeltaR");
@@ -73,19 +73,23 @@ void MultiParticleInConeGunProducer::produce(Event& e, const EventSetup& es) {
   //
   int barcode = 1;
   for (unsigned int ip = 0; ip < fPartIDs.size(); ++ip) {
-    double pt = CLHEP::RandFlat::shoot(engine, fMinPt, fMaxPt);
+    double energy = CLHEP::RandFlat::shoot(engine, fMinE, fMaxE);
     double eta = CLHEP::RandFlat::shoot(engine, fMinEta, fMaxEta);
     double phi = CLHEP::RandFlat::shoot(engine, fMinPhi, fMaxPhi);
     int PartID = fPartIDs[ip];
     const HepPDT::ParticleData* PData = fPDGTable->particle(HepPDT::ParticleID(abs(PartID)));
     double mass = PData->mass().value();
+    double mom2 = energy * energy - mass * mass;
+    double mom = 0.;
+    if (mom2 > 0.) {
+      mom = sqrt(mom2);
+    } else {
+      mom = 0.;
+    }
     double theta = 2. * atan(exp(-eta));
-    double mom = pt / sin(theta);
-    double px = pt * cos(phi);
-    double py = pt * sin(phi);
+    double px = mom * sin(theta) * cos(phi);
+    double py = mom * sin(theta) * sin(phi);
     double pz = mom * cos(theta);
-    double energy2 = mom * mom + mass * mass;
-    double energy = sqrt(energy2);
 
     HepMC::FourVector p(px, py, pz, energy);
     HepMC::GenParticle* Part = new HepMC::GenParticle(p, PartID, 1);
