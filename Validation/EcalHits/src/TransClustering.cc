@@ -4,7 +4,6 @@
 #include <DataFormats/EcalDetId/interface/EBDetId.h>
 #include "Geometry/EcalAlgo/interface/EcalBarrelGeometry.h"
 #include "Calibration/IsolatedParticles/interface/DetIdFromEtaPhi.h"
-
 #include "Validation/EcalHits/interface/TransClustering.h"
 
 // ------------ constructor and destructor --------------
@@ -12,7 +11,8 @@ TransClustering::TransClustering(const edm::ParameterSet& iConfig)
   : g4InfoLabel(iConfig.getParameter<std::string>("moduleLabelG4")),
     EBHitsCollection(iConfig.getParameter<std::string>("EBHitsCollection")),
     ValidationCollection(iConfig.getParameter<std::string>("ValidationCollection")),
-    jobId(iConfig.getParameter<std::string>("jobId"))
+    jobId(iConfig.getParameter<std::string>("jobId")),
+    maskedEcalChannelStatusThreshold(iConfig.getParameter<int>("maskedEcalChannelStatusThreshold"))
 {
   EBrechitCollection_Token = consumes<EBRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBrechitCollection"));
   EBuncalibrechitCollection_Token = consumes<EBUncalibratedRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBuncalibrechitCollection"));
@@ -26,6 +26,11 @@ TransClustering::TransClustering(const edm::ParameterSet& iConfig)
   pfClusterToken = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECAL"));
   barrelGeomToken = esConsumes<CaloSubdetectorGeometry, EcalBarrelGeometryRecord>(edm::ESInputTag("", "EcalBarrel"));
   ecalGeomToken = esConsumes<CaloGeometry, CaloGeometryRecord>();
+  ecalStatusToken = esConsumes<EcalChannelStatus, EcalChannelStatusRcd>();
+  ttmapToken = esConsumes<EcalTrigTowerConstituentsMap, IdealGeometryRecord>();
+  // mtdgeoToken = esConsumes<MTDGeometry, MTDDigiGeometryRecord>();
+  // mtdtopoToken = esConsumes<MTDTopology, MTDTopologyRcd>();
+  // btlSimHitsToken = consumes<CrossingFrame<PSimHit>>(iConfig.getParameter<edm::InputTag>("btlSimHits"));
 }
 
 TransClustering::~TransClustering() {
@@ -49,7 +54,73 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   // ***************** Get the Ecal Barrel Geometry *****************
 
   const CaloGeometry& geo = iSetup.getData(ecalGeomToken);
-  const CaloSubdetectorGeometry& barrelGeom = iSetup.getData(barrelGeomToken);
+  //const CaloSubdetectorGeometry& barrelGeom = iSetup.getData(barrelGeomToken);
+  // Get barrel subgeometry from it - no separate token needed
+  // const CaloSubdetectorGeometry* barrelGeom = geo.getSubdetectorGeometry(DetId::Ecal, EcalBarrel);
+  const EcalBarrelGeometry* barrelGeom = dynamic_cast<const EcalBarrelGeometry*>(geo.getSubdetectorGeometry(DetId::Ecal, EcalBarrel));
+
+    // auto geometryHandle = iSetup.getTransientHandle(mtdgeoToken);
+  // const MTDGeometry* btlGeom = geometryHandle.product();
+  // auto topologyHandle = iSetup.getTransientHandle(mtdtopoToken);
+  // const MTDTopology* topology = topologyHandle.product();
+
+  edm::ESHandle<EcalChannelStatus> ecalStatus;
+  edm::ESHandle<EcalTrigTowerConstituentsMap> ttMap;
+  ttMap = iSetup.getHandle(ttmapToken);
+  ecalStatus = iSetup.getHandle(ecalStatusToken);
+
+  // XXX: All the following can be built at the beginning of a job
+  // Store DetId <==> vector<double> (eta, phi, theta)
+  std::map<DetId, std::vector<double> > EcalAllDeadChannelsValMap;
+  // Store EB: DetId <==> vector<int> (subdet, ieta, iphi, status)
+  std::map<DetId, std::vector<int> > EcalAllDeadChannelsBitMap;
+  // Store DetId <==> EcalTrigTowerDetId
+  std::map<DetId, EcalTrigTowerDetId> EcalAllDeadChannelsTTMap;
+
+  EcalAllDeadChannelsValMap.clear();
+  EcalAllDeadChannelsBitMap.clear();
+  EcalAllDeadChannelsTTMap.clear();
+
+   // Loop over EB ...
+  for (int ieta = -85; ieta <= 85; ieta++) {
+    for (int iphi = 0; iphi <= 360; iphi++) {
+      if (!EBDetId::validDetId(ieta, iphi))
+        continue;
+
+      const EBDetId detid = EBDetId(ieta, iphi, EBDetId::ETAPHIMODE);
+      EcalChannelStatus::const_iterator chit = ecalStatus->find(detid);
+      // refer https://twiki.cern.ch/twiki/bin/viewauth/CMS/EcalChannelStatus
+      int status = (chit != ecalStatus->end()) ? chit->getStatusCode() & 0x1F : -1;
+
+      const CaloSubdetectorGeometry* subGeom = geo.getSubdetectorGeometry(detid);
+      auto cellGeom = subGeom->getGeometry(detid);
+      double eta = cellGeom->getPosition().eta();
+      double phi = cellGeom->getPosition().phi();
+      double theta = cellGeom->getPosition().theta();
+
+      if (status >= maskedEcalChannelStatusThreshold) {
+        std::cout << "Masked EB channel: ieta=" << ieta << ", iphi=" << iphi << ", status=" << status << std::endl;
+        std::vector<double> valVec;
+        std::vector<int> bitVec;
+        valVec.push_back(eta);
+        valVec.push_back(phi);
+        valVec.push_back(theta);
+        bitVec.push_back(1);
+        bitVec.push_back(ieta);
+        bitVec.push_back(iphi);
+        bitVec.push_back(status);
+        EcalAllDeadChannelsValMap.insert(std::make_pair(detid, valVec));
+        EcalAllDeadChannelsBitMap.insert(std::make_pair(detid, bitVec));
+      }
+    }  // end loop iphi
+  }  // end loop ieta
+
+  std::map<DetId, std::vector<int> >::iterator bitItor;
+  for (bitItor = EcalAllDeadChannelsBitMap.begin(); bitItor != EcalAllDeadChannelsBitMap.end(); bitItor++) {
+    const DetId id = bitItor->first;
+    EcalTrigTowerDetId ttDetId = ttMap->towerOf(id);
+    EcalAllDeadChannelsTTMap.insert(std::make_pair(id, ttDetId));
+  }
 
   // ***************** Get the collections *****************
 
@@ -65,6 +136,10 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   edm::Handle<reco::GenParticleCollection> genParticles;
   iEvent.getByToken(genParticleToken, genParticles);
 
+  // edm::Handle<CrossingFrame<PSimHit>> btlSimHandle;
+  // iEvent.getByToken(btlSimHitsToken, btlSimHandle);
+  // MixCollection<PSimHit> btlSimHits(btlSimHandle.product());
+  
   const EBRecHitCollection *EBRecHit = nullptr;
   edm::Handle<EBRecHitCollection> EcalRecHitEB;
   iEvent.getByToken(EBrechitCollection_Token, EcalRecHitEB);
@@ -110,8 +185,29 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   // Map photon trackId to conversion info
   std::map<unsigned, std::pair<float, float>> photonConversionInfo; // trackId -> (R, Z)
 
+  // Build parent map (do this once, outside the gen particle loop)
+  std::map<unsigned int, unsigned int> parentMap;
+  for (const auto& simTk : theSimTracks) {
+      if (!simTk.noVertex()) {
+          const SimVertex& vtx = theSimVertices[simTk.vertIndex()];
+          if (vtx.parentIndex() > 0) {
+              parentMap[simTk.trackId()] = vtx.parentIndex();
+          }
+      }
+  }
+  auto descendsFrom = [&](unsigned int hitTrackId, unsigned int ancestorId) -> bool {
+    unsigned int current = hitTrackId;
+    for (int depth = 0; depth < 20; ++depth) {
+        if (current == ancestorId) return true;
+        auto it = parentMap.find(current);
+        if (it == parentMap.end()) break;
+        current = it->second;
+    }
+    return false;
+  };
+
   // Find photons from primary vertex
-  std::vector<SimTrack *> photonTracks;
+  std::vector<SimTrack*> photonTracks;
   for (auto& simTk : theSimTracks) {
     if (simTk.noVertex()) continue;
     if (simTk.vertIndex() == iPV && simTk.type() == 22) {
@@ -159,10 +255,11 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 
   std::cout << "GenParticles" << std::endl;
   for (const auto& genParticle : *genParticles) {
-    int pdgId     = genParticle.pdgId();
+    int pdgId    = genParticle.pdgId();
     float pt     = genParticle.pt();
     float eta    = genParticle.eta();
     float phi    = genParticle.phi();
+    //float theta  = genParticle.theta();
     float energy = genParticle.energy();
     //int status = genParticle.status();
     
@@ -177,12 +274,16 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     // Check if this photon converted (by matching to SimTracks from primary vertex)
     int isConverted = 0;
     float convR = 0., convZ = 0.;
+    int ieta = 0;
+    int iphi = 0;
+    // float ieta_f = 0.;
+    // float iphi_f = 0.;
     if (pdgId == 22 && iPV >= 0) {
       // Match GenParticle photon to SimTrack photon by kinematic proximity
       float minDR = 0.1;  // dR matching threshold
       unsigned bestTrackId = 0;
-      
-      for (auto* phoTk : photonTracks) {
+
+      for (SimTrack* phoTk : photonTracks) {
         // Calculate dR between GenParticle and SimTrack photon
         float trackEta = phoTk->momentum().eta();
         float trackPhi = phoTk->momentum().phi();
@@ -214,23 +315,28 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
           std::cout << "  -> Converted at R=" << convR << ", Z=" << convZ << std::endl;
         }
       }
+
+      // Match gen photon SimTrack to its earliest PCaloHit in ECAL
+      EBDetId cpEBid;
+      float earliestTime = 1e9;
+      bool found = false;
+
+      for (const auto& hit : theEBCaloHits) {
+        if (hit.time() > 500.) continue; 
+        
+        if (descendsFrom((unsigned int)hit.geantTrackId(), bestTrackId)) {
+          if (hit.time() < earliestTime) {
+            earliestTime = hit.time();
+            cpEBid = EBDetId(hit.id());
+            found = true;
+          }
+        }
+      }
+      if (found) {
+        ieta = cpEBid.ieta();
+        iphi = cpEBid.iphi();
+      }
     }
-
-    // Calculate position on ECAL surface
-    double ECAL_RADIUS = 129.0; // cm
-
-    double theta = 2.0 * std::atan(std::exp(-eta));
-    double x = ECAL_RADIUS * std::cos(phi);
-    double y = ECAL_RADIUS * std::sin(phi);
-    double z = ECAL_RADIUS / std::tan(theta);
-
-    GlobalPoint ecalPoint(x, y, z);
-    DetId closestCell = barrelGeom.getClosestCell(ecalPoint);
-    EBDetId cpEBid(closestCell);
-
-    std::cout << "  GenParticle momentum points to: ieta=" << cpEBid.ieta() 
-              << " iphi=" << cpEBid.iphi() << std::endl;
-    
     genEvent.push_back(iEvent.id().event());
     genPDG.push_back(pdgId);
     genSourceX.push_back(vx);
@@ -239,8 +345,8 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     genPEta.push_back(eta);
     genPPhi.push_back(phi);
     genPPt.push_back(pt);
-    genEta.push_back(cpEBid.ieta());
-    genPhi.push_back(cpEBid.iphi());
+    genEta.push_back(ieta);
+    genPhi.push_back(iphi);
     genE.push_back(energy);
     genIsConverted.push_back(isConverted);
     genConvR.push_back(convR);
@@ -255,11 +361,11 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   for (const auto& cp : *caloParticles) {
     nsimhits = 0;
     
-    std::cout << "GenParticle ID " << cp.pdgId() << ", energy = " << cp.energy() << ", eta = " << cp.eta() << ", phi = " << cp.phi() << std::endl;
+    // std::cout << "GenParticle ID " << cp.pdgId() << ", energy = " << cp.energy() << ", eta = " << cp.eta() << ", phi = " << cp.phi() << std::endl;
     
     // Access sim clusters associated with this calo particle
     const auto& simClusters = cp.simClusters();
-    std::cout << "GenParticle has " << simClusters.size() << " associated sim clusters." << std::endl;
+    // std::cout << "GenParticle has " << simClusters.size() << " associated sim clusters." << std::endl;
     sc_number = 0;
     for (const auto& sc : simClusters) {
 
@@ -272,26 +378,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
       caloPPt.push_back(sc->pt());
       caloTrackId.push_back(sc->g4Track_begin()->trackId());
       caloEvent.push_back(iEvent.id().event());
-
-      // Calculate position on ECAL surface
-      double cpEta = sc->eta();
-      double cpPhi = sc->phi();
-      double ECAL_RADIUS = 129.0; // cm
-
-      double theta = 2.0 * std::atan(std::exp(-cpEta));
-      double x = ECAL_RADIUS * std::cos(cpPhi);
-      double y = ECAL_RADIUS * std::sin(cpPhi);
-      double z = ECAL_RADIUS / std::tan(theta);
-
-      GlobalPoint ecalPoint(x, y, z);
-      DetId closestCell = barrelGeom.getClosestCell(ecalPoint);
-      EBDetId cpEBid(closestCell);
-
-      std::cout << "  CaloParticle momentum points to: ieta=" << cpEBid.ieta() 
-                << " iphi=" << cpEBid.iphi() << std::endl;
-
-      caloEta.push_back(cpEBid.ieta());
-      caloPhi.push_back(cpEBid.iphi());
 
       // Get the sim hits associated with this sim cluster
         const auto& hitAndEnergies = sc->hits_and_energies();
@@ -354,8 +440,8 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     EBEnergy_ += isim->energy();
     nEBHits++;
   }
-  std::cout << "Number of EB sim hits: " << nEBHits << std::endl;
-  std::cout << "Total EB sim energy: " << EBEnergy_ << std::endl;
+  // std::cout << "Number of EB sim hits: " << nEBHits << std::endl;
+  // std::cout << "Total EB sim energy: " << EBEnergy_ << std::endl;
 
   for (const auto& [key, val] : simMap) {
     simIEta.push_back(key.first);
@@ -376,7 +462,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     recoMap[std::make_pair(ieta, iphi)] += recHit->energy();
     nEBHits++;
   }
-  std::cout << "Number of EB rec hits: " << nEBHits << std::endl;
+  // std::cout << "Number of EB rec hits: " << nEBHits << std::endl;
 
   for (const auto& [key, val] : recoMap) {
     recoIEta.push_back(key.first);
@@ -392,10 +478,11 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     //DetId ebid = pf.seed();
     //EBDetId ebdetid(ebid);
     pfEvent.push_back(iEvent.id().event());
-    pfE.push_back(pf.correctedEnergy());
+    float corr_E = static_cast<float>(pf.correctedEnergy());
+    pfE.push_back(corr_E);
 
     GlobalPoint gp(pf.position().x(), pf.position().y(), pf.position().z());
-    DetId closestCell = barrelGeom.getClosestCell(gp);
+    DetId closestCell = barrelGeom->getClosestCell(gp);
     EBDetId ebid(closestCell);
     int ieta = ebid.ieta();
     int iphi = ebid.iphi();
@@ -403,8 +490,8 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     // double exact_eta = gp.eta();
     // double exact_phi = gp.phi().value();
     
-    // // Get crystal center position
-    // GlobalPoint cellCenter = barrelGeom.getGeometry(closestCell)->getPosition();
+    // Get crystal center position
+    // GlobalPoint cellCenter = barrelGeom->getGeometry(closestCell)->getPosition();
 
     // // Calculate fractional offset from crystal center
     // double deltaEta = exact_eta - cellCenter.eta();
@@ -420,7 +507,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     pfEta.push_back(ieta);
     pfPhi.push_back(iphi);
 
-    std::cout << " PFCluster E=" << pf.correctedEnergy() << " at (" << ieta << ", " << iphi << ")" << std::endl;
+    std::cout << " PFCluster E=" << corr_E << " at (" << ieta << ", " << iphi << ")" << std::endl;
   }
 
   simTree->Fill();
@@ -491,6 +578,17 @@ void TransClustering::clearEventData() {
   pfPhi.clear();
   pfEta.clear();
   pfE.clear();
+
+  // btlE.clear();
+  // btlT.clear();
+  // btlX.clear();
+  // btlY.clear();
+  // btlZ.clear();
+  // btlLocX.clear();
+  // btlLocY.clear();
+  // btlLocZ.clear();
+  // btlPDG.clear();
+  // btlEvent.clear();
 }
 
 // ------------ helper method for photon conversion tracking ------------
@@ -573,4 +671,16 @@ void TransClustering::bookHistograms(DQMStore::IBooker& ibook, edm::Run const& r
   pfTree->Branch("eta",    &pfEta);
   pfTree->Branch("phi",    &pfPhi);
   pfTree->Branch("event",  &pfEvent);
+
+  // btlTree = fs->make<TTree>("btlTree", "A tree with BTL SIM hit information");
+  // btlTree->Branch("energy", &btlE);
+  // btlTree->Branch("time",   &btlT);
+  // btlTree->Branch("x",      &btlX);
+  // btlTree->Branch("y",      &btlY);
+  // btlTree->Branch("z",      &btlZ);
+  // btlTree->Branch("locX",   &btlLocX);
+  // btlTree->Branch("locY",   &btlLocY);
+  // btlTree->Branch("locZ",   &btlLocZ);
+  // btlTree->Branch("pdgId",  &btlPDG);
+  // btlTree->Branch("event",  &btlEvent);
 }

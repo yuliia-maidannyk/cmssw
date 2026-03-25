@@ -54,6 +54,27 @@ void ManyParticleFlatRandomEGunProducer::produce(Event& e, const EventSetup& es)
 
   for (unsigned int ip = 0; ip < fPartIDs.size(); ip++) {
 
+    // Linear distribution f(x) = m*x + b on [fMinE[ip], fMaxE[ip]]
+    // Parameters
+    // double a = fMinE[ip];
+    // double xMax = fMaxE[ip];
+    // double m = -12.0;
+    // double bCoef = 1200.0;
+
+    // // Normalization: integral of f(x) from a to xMax
+    // double N = (m / 2.0) * (xMax * xMax - a * a) + bCoef * (xMax - a);
+
+    // // Draw a uniform random number
+    // double u = CLHEP::RandFlat::shoot(engine, 0.0, 1.0);
+
+    // // Solve quadratic: (m/2)*x^2 + bCoef*x - C = 0
+    // // where C = u*N + (m/2)*a^2 + bCoef*a
+    // double C = u * N + (m / 2.0) * a * a + bCoef * a;
+
+    // // Quadratic formula: x = (-bCoef ± sqrt(bCoef^2 + 2*m*C)) / m
+    // double discriminant = bCoef * bCoef + 2.0 * m * C;
+    // double energy = (-bCoef + std::sqrt(discriminant)) / m;
+    
     double energy = CLHEP::RandFlat::shoot(engine, fMinE[ip], fMaxE[ip]);
     double eta    = CLHEP::RandFlat::shoot(engine, fMinEta[ip], fMaxEta[ip]);
     double phi    = CLHEP::RandFlat::shoot(engine, fMinPhi[ip], fMaxPhi[ip]);

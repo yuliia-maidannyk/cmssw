@@ -1,5 +1,6 @@
 <use name="FWCore/Framework"/>
 <use name="FWCore/ParameterSet"/>
+<use name="CommonTools/UtilAlgos"/>
 <use name="Geometry/MTDGeometryBuilder"/>
 <use name="RecoLocalFastTime/Records"/>
 <use name="RecoLocalFastTime/FTLClusterizer"/>

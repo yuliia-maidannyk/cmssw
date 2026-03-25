@@ -8,13 +8,14 @@ transClustering = DQMEDAnalyzer("TransClustering",
     genParticles                = cms.InputTag("genParticles"),
     simTrackCollection          = cms.InputTag("g4SimHits"),
     simVertexCollection         = cms.InputTag("g4SimHits"),
-    # reducedBarrelRecHitCollection = cms.InputTag("reducedEcalRecHitsEB"),
     EBrechitCollection          = cms.InputTag("ecalRecHit","EcalRecHitsEB"),
     EBuncalibrechitCollection   = cms.InputTag("ecalMultiFitUncalibRecHit","EcalUncalibRecHitsEB"),
     CaloParticleCollection      = cms.InputTag("mix", "MergedCaloTruth"),
     jobId                       = cms.string('NOJOBID'),
     HepMCProductLabel           = cms.InputTag('generatorSmeared'),
-    particleFlowClusterECAL     = cms.InputTag("particleFlowClusterECAL")
+    particleFlowClusterECAL     = cms.InputTag("particleFlowClusterECAL"),
+    btlSimHits                  = cms.InputTag("mix", "g4SimHitsFastTimerHitsBarrel"),
+    maskedEcalChannelStatusThreshold = cms.int32(1)
 )
 
 

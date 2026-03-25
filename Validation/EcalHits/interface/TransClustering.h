@@ -41,17 +41,43 @@
 #include "SimDataFormats/CaloAnalysis/interface/SimCluster.h"
 #include "SimDataFormats/CaloAnalysis/interface/SimClusterFwd.h"
 #include "SimDataFormats/GeneratorProducts/interface/HepMCProduct.h"
+// #include "SimDataFormats/CrossingFrame/interface/CrossingFrame.h"
+// #include "SimDataFormats/CrossingFrame/interface/MixCollection.h"
+// #include "SimDataFormats/TrackingHit/interface/PSimHit.h"
+
+// #include "Geometry/Records/interface/MTDDigiGeometryRecord.h"
+// #include "Geometry/Records/interface/MTDTopologyRcd.h"
+// #include "Geometry/MTDGeometryBuilder/interface/MTDGeometry.h"
+// #include "Geometry/MTDGeometryBuilder/interface/MTDTopology.h"
+// #include "Geometry/MTDGeometryBuilder/interface/ProxyMTDTopology.h"
+// #include "Geometry/MTDGeometryBuilder/interface/RectangularMTDTopology.h"
+// #include "Geometry/MTDCommonData/interface/MTDTopologyMode.h"
 
 #include "Geometry/CaloGeometry/interface/CaloGeometry.h"
 #include "Geometry/Records/interface/CaloGeometryRecord.h"
 #include "Geometry/CaloGeometry/interface/CaloSubdetectorGeometry.h"
 #include "Geometry/Records/interface/EcalBarrelGeometryRecord.h"
+#include "CondFormats/EcalObjects/interface/EcalChannelStatus.h"
+#include "CondFormats/DataRecord/interface/EcalChannelStatusRcd.h"
+#include "Geometry/CaloTopology/interface/EcalTrigTowerConstituentsMap.h"
 
 #include <map>
 #include <vector>
 #include <TFile.h>
 #include <TTree.h>
 #include <string>
+
+// struct MTDHit {
+//   float energy = 0.f;
+//   float time = 0.f;
+//   float x = 0.f;
+//   float y = 0.f;
+//   float z = 0.f;
+//   int process = 0;
+//   int type = 0;
+//   int pdgId = 0;
+//   int trackId = 0;
+// };
 
 class TransClustering : public DQMOneEDAnalyzer<> {
   typedef std::map<std::pair<int, int>, float> MapType;
@@ -77,6 +103,7 @@ private:
   std::string EBHitsCollection;
   std::string ValidationCollection;
   std::string jobId;
+  int maskedEcalChannelStatusThreshold;
 
   edm::EDGetTokenT<edm::PCaloHitContainer> EBHitsToken;
   edm::EDGetTokenT<PEcalValidInfo> ValidationCollectionToken;
@@ -90,12 +117,18 @@ private:
   edm::EDGetTokenT<edm::HepMCProduct> HepMCToken;
   edm::ESGetToken<CaloSubdetectorGeometry, EcalBarrelGeometryRecord> barrelGeomToken;
   edm::ESGetToken<CaloGeometry, CaloGeometryRecord> ecalGeomToken;
+  edm::ESGetToken<EcalChannelStatus, EcalChannelStatusRcd> ecalStatusToken;
+  edm::ESGetToken<EcalTrigTowerConstituentsMap, IdealGeometryRecord> ttmapToken;
+  // edm::EDGetTokenT<CrossingFrame<PSimHit>> btlSimHitsToken;
+  // edm::ESGetToken<MTDGeometry, MTDDigiGeometryRecord> mtdgeoToken;
+  // edm::ESGetToken<MTDTopology, MTDTopologyRcd> mtdtopoToken;
 
   TTree* simTree;
   TTree* recoTree;
   TTree* caloTree;
   TTree* pfTree;
   TTree* genTree;
+  // TTree* btlTree;
 
   std::vector<int>      simPDG;
   std::vector<float>    simT;
@@ -125,8 +158,8 @@ private:
   std::vector<float>    caloPPt;
   std::vector<float>    caloPPhi;
   std::vector<float>    caloPEta;
-  std::vector<int>      caloEta;
-  std::vector<int>      caloPhi;
+  std::vector<float>    caloEta;
+  std::vector<float>    caloPhi;
   std::vector<float>    caloPDG;
   std::vector<int>      caloEvent;
   std::vector<int>      caloSubEvent;
@@ -141,8 +174,8 @@ private:
   std::vector<float> genPPt;
   std::vector<float> genPPhi;
   std::vector<float> genPEta;
-  std::vector<int>   genEta;
-  std::vector<int>   genPhi;
+  std::vector<float> genEta;
+  std::vector<float> genPhi;
   std::vector<int>   genPDG;
   std::vector<int>   genEvent;
   std::vector<float> genSourceX;
@@ -156,6 +189,18 @@ private:
   std::vector<int>    pfPhi;
   std::vector<int>    pfEta;
   std::vector<double> pfE;
+
+  // std::vector<float> btlPDG;
+  // std::vector<float> btlT;
+  // std::vector<float> btlE;
+  // std::vector<float> btlLocX;
+  // std::vector<float> btlLocY;
+  // std::vector<float> btlLocZ;
+  // std::vector<float> btlX;
+  // std::vector<float> btlY;
+  // std::vector<float> btlZ;
+  // std::vector<int>   btlEvent;
+  // std::vector<uint32_t> btlType;
 
   std::map<unsigned, unsigned> geantToIndex_;
 };

@@ -56,6 +56,8 @@ private:
 
   void analyze(const edm::Event&, const edm::EventSetup&) override;
 
+  void clearEventData();
+
   // ------------ member data ------------
 
   const std::string folder_;
@@ -202,28 +204,8 @@ BtlClustering::BtlClustering(const edm::ParameterSet& iConfig)
 }
 
 BtlClustering::~BtlClustering() {
-  simTree->Fill();
-  recoTree->Fill();
-  caloTree->Fill();
-  simTracksterTree->Fill();
-  simLayerClusterTree->Fill();
   myFile->Write();
   myFile->Close();
-
-  // Then clear vectors for next event
-  /*
-  tp_pdg.clear();
-  tp_pt.clear();
-  tp_trackId.clear();
-  tp_sourceX.clear();
-  tp_sourceY.clear();
-  tp_sourceZ.clear();
-  tp_sourceT.clear();
-  tp_decayX.clear();
-  tp_decayY.clear();
-  tp_decayZ.clear();
-  tp_decayT.clear();
-  */
 }
 
 // ------------ method called for each event  ------------
@@ -232,11 +214,7 @@ void BtlClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
   using namespace std;
   using namespace geant_units::operators;
 
-  static unsigned long eventCount = 0;
-  ++eventCount;
-  if (eventCount % 100 == 0) {
-    std::cout << "Processed " << eventCount << " events" << std::endl;
-  }
+  clearEventData();
 
   auto geometryHandle = iSetup.getTransientHandle(mtdgeoToken_);
   const MTDGeometry* geom = geometryHandle.product();
@@ -258,96 +236,6 @@ void BtlClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
   auto mtdTrkHitHandle = makeValid(iEvent.getHandle(mtdTrackingHitToken_));
   const auto& r2sAssociationMap = iEvent.get(r2sAssociationMapToken_);
   MixCollection<PSimHit> btlSimHits(btlSimHitsHandle.product());
-
-  // for (const auto& vtx : *simVerticesHandle) {
-  //   std::cout << std::endl;
-  //   std::cout << "******** Vertex ******* " << vtx.position() << std::endl;
-  //   std::cout << "******** Parent vertex ID ******* " << vtx.parentIndex() << std::endl;
-  //   std::cout << "******** Vertex ID ******* " << vtx.vertexId() << std::endl;
-  //   //std::cout << "******** G4 Track ID ******* " << vtx.trackId() << std::endl;
-  // }
-
-  // --- Loop over the TrackingParticles
-  // Each TrackingParticle can be associated to multiple G4 Tracks
-  // Iterate over G4 Tracks to get all relevant information
-  // Then add the vertex information
-  // --- Loop over the TrackingParticles
-  /*
-  // Store the current event ID
-  currentEventId = iEvent.id().event();
-  
-  // Temporary storage for this event's TPs
-  std::vector<std::vector<int>> event_tp_pdg;
-  std::vector<std::vector<float>> event_tp_pt;
-  std::vector<std::vector<int>> event_tp_trackId;
-  
-  std::vector<float> event_tp_sourceX;
-  std::vector<float> event_tp_sourceY;
-  std::vector<float> event_tp_sourceZ;
-  std::vector<float> event_tp_sourceT;
-  
-  std::vector<std::vector<float>> event_tp_decayX;
-  std::vector<std::vector<float>> event_tp_decayY;
-  std::vector<std::vector<float>> event_tp_decayZ;
-  std::vector<std::vector<float>> event_tp_decayT;
-  
-  // --- Loop over the TrackingParticles in this event
-  for (const auto& tp : *trackingParticleCollectionHandle) {
-    
-    // Temporary storage for this TP
-    std::vector<int> pdg_list;
-    std::vector<float> pt_list;
-    std::vector<int> id_list;
-    
-    std::vector<float> decayX_list, decayY_list, decayZ_list, decayT_list;
-    
-    // Collect all G4 tracks for this TP
-    for (auto g4T = tp.g4Track_begin(); g4T != tp.g4Track_end(); ++g4T) {
-      pdg_list.push_back(g4T->type());
-      pt_list.push_back(g4T->momentum().pt());
-      id_list.push_back(g4T->trackId());
-    }
-    
-    // Store this TP's G4Track info
-    event_tp_pdg.push_back(pdg_list);
-    event_tp_pt.push_back(pt_list);
-    event_tp_trackId.push_back(id_list);
-    
-    // Parent vertex (one per TP)
-    event_tp_sourceX.push_back(tp.parentVertex()->position().x());
-    event_tp_sourceY.push_back(tp.parentVertex()->position().y());
-    event_tp_sourceZ.push_back(tp.parentVertex()->position().z());
-    event_tp_sourceT.push_back(tp.parentVertex()->position().t());
-    
-    // Decay vertices (can be multiple per TP)
-    for (auto dv = tp.decayVertices_begin(); dv != tp.decayVertices_end(); ++dv) {
-      decayX_list.push_back((*dv)->position().x());
-      decayY_list.push_back((*dv)->position().y());
-      decayZ_list.push_back((*dv)->position().z());
-      decayT_list.push_back((*dv)->position().t());
-    }
-    
-    event_tp_decayX.push_back(decayX_list);
-    event_tp_decayY.push_back(decayY_list);
-    event_tp_decayZ.push_back(decayZ_list);
-    event_tp_decayT.push_back(decayT_list);
-  }
-  
-  // Store this event's data
-  tp_pdg.push_back(event_tp_pdg);
-  tp_pt.push_back(event_tp_pt);
-  tp_trackId.push_back(event_tp_trackId);
-  
-  tp_sourceX.push_back(event_tp_sourceX);
-  tp_sourceY.push_back(event_tp_sourceY);
-  tp_sourceZ.push_back(event_tp_sourceZ);
-  tp_sourceT.push_back(event_tp_sourceT);
-  
-  tp_decayX.push_back(event_tp_decayX);
-  tp_decayY.push_back(event_tp_decayY);
-  tp_decayZ.push_back(event_tp_decayZ);
-  tp_decayT.push_back(event_tp_decayT);
-  */
   
   std::cout << "TrackingParticleCollection" << std::endl;
   for (const auto& tp : *trackingParticleCollectionHandle) {
@@ -365,10 +253,6 @@ void BtlClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
       caloEvent.push_back(iEvent.id().event());
       caloSubEvent.push_back(k); // Number within this TP. Reset every TP
       k = k + 1;
-      // std::cout << std::endl;
-      // std::cout << "******** Parent vertex positions ******* " << tp.parentVertex()->position() << std::endl;
-      // std::cout << "******** Vertex in tracker volume ******* " << tp.parentVertex()->inVolume() << std::endl;
-      // std::cout << "******** G4 Track ID ******* " << g4T->trackId() << std::endl;
     }
     // Parent vertex info
     caloSourceX.push_back(tp.parentVertex()->position().x());
@@ -406,32 +290,6 @@ void BtlClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
       (simHitIt->second).process = simHit.processType();
       (simHitIt->second).trackId = simHit.originalTrackId();
     }
-    // BTLDetId detId = BTLDetId(id);
-    // DetId geoId = detId.geographicalId(MTDTopologyMode::crysLayoutFromTopoMode(topology->getMTDTopologyMode()));
-    // const MTDGeomDet* thedet = geom->idToDet(geoId);
-    // const ProxyMTDTopology& topoproxy = static_cast<const ProxyMTDTopology&>(thedet->topology());
-    // const RectangularMTDTopology& topo = static_cast<const RectangularMTDTopology&>(topoproxy.specificTopology());
-
-    // Local3DPoint local_point_sim(convertMmToCm(hit_pos.x()), convertMmToCm(hit_pos.y()), convertMmToCm(hit_pos.z()));
-    // local_point_sim = topo.pixelToModuleLocalPoint(local_point_sim, detId.row(topo.nrows()), detId.column(topo.nrows()));
-    // const auto& global_point_sim = thedet->toGlobal(local_point_sim);
-
-    // // --- Get the times of the every SIM hit
-    // simLocX.push_back(local_point_sim.x());
-    // simLocY.push_back(local_point_sim.y());
-    // simLocZ.push_back(local_point_sim.z());
-    // simTheta.push_back(global_point_sim.perp());
-    // simPhi.push_back(global_point_sim.phi());
-    // simEta.push_back(global_point_sim.eta());
-    // simZ.push_back(global_point_sim.z());
-    // simT.push_back(simHit.tof());
-    // simE.push_back(convertUnitsTo(0.001_MeV, simHit.energyLoss()));
-    // simPDG.push_back(simHit.particleType());
-    // simProcess.push_back(simHit.processType());
-    // simType.push_back(simHit.offsetTrackId());
-    // simID.push_back(id.rawId());
-    // simEvent.push_back(iEvent.id().event());
-    // simTrackId.push_back(simHit.originalTrackId());
   } // --- end of simHit loop
 
   // --- Loop over the simTracksters
@@ -545,21 +403,6 @@ void BtlClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
           std::cout << "CP momentum, ID, pos : " << (*simClusterRef).p4() << " " << (*simClusterRef).pdgId() << std::endl;
           std::cout << "Accumulated E, pos: " << simClusEnergy << " " << simClusGlobalPos << std::endl;
 
-          //for (auto simclusterhit : (*simClusterRef).hits_and_positions()) {
-            //uint64_t hit_ID = simclusterhit.first;
-            //caloID.push_back(hit_ID>>32);
-            //caloX.push_back(simclusterhit.second.x());
-            //caloY.push_back(simclusterhit.second.y());
-            //caloZ.push_back(simclusterhit.second.z());
-          //}
-          // First SimTrack only
-          //caloPDG.push_back((*simClusterRef).pdgId());
-          //caloTheta.push_back((*simClusterRef).theta());
-          //caloPhi.push_back((*simClusterRef).phi());
-          //caloEta.push_back((*simClusterRef).eta());
-          //caloE.push_back((*simClusterRef).energy());
-          //caloT.push_back((*simClusterRef).time());
-
           // Accumulated for the cluster
           simLayerClusterPDG.push_back((*simClusterRef).pdgId());
           simLayerClusterSeed.push_back((*simClusterRef).seedId());
@@ -577,7 +420,96 @@ void BtlClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSe
       } // --- end of MtdSimLayerClusters
     }
   } // --- end of BTL RECO clusters
+
+  simTree->Fill();
+  recoTree->Fill();
+  caloTree->Fill();
+  simTracksterTree->Fill();
+  simLayerClusterTree->Fill();
 } // --- end of analyze
+
+void BtlClustering::clearEventData() 
+{
+  // clear the vectors to free memory
+  simLayerClusterE.clear();
+  simLayerClusterT.clear();
+  simLayerClusterLocX.clear();
+  simLayerClusterLocY.clear();
+  simLayerClusterLocZ.clear();
+  simLayerClusterTheta.clear();
+  simLayerClusterPhi.clear();
+  simLayerClusterEta.clear();
+  simLayerClusterZ.clear();
+  simLayerClusterPDG.clear();
+  simLayerClusterSeed.clear();
+  simLayerClusterEvent.clear();
+
+  simTracksterE.clear();
+  simTracksterT.clear();
+  simTracksterLocX.clear();
+  simTracksterLocY.clear();
+  simTracksterLocZ.clear();
+  simTracksterX.clear();
+  simTracksterY.clear();
+  simTracksterZ.clear();
+  simTracksterTheta.clear();
+  simTracksterPhi.clear();
+  simTracksterEta.clear();
+  simTracksterPDG.clear();
+  simTracksterEvent.clear();
+  simTracksterTrackId.clear();
+
+  simPDG.clear();
+  simT.clear();
+  simE.clear();
+  simLocX.clear();
+  simLocY.clear();
+  simLocZ.clear();
+  simX.clear();
+  simY.clear();
+  simTheta.clear();
+  simPhi.clear();
+  simEta.clear();
+  simZ.clear();
+  simEvent.clear();
+  simID.clear();
+  simType.clear();
+  simTrackId.clear();
+  simProcess.clear();
+
+  recoT.clear();
+  recoE.clear();
+  recoLocX.clear(); 
+  recoLocY.clear();
+  recoLocZ.clear();
+  recoTheta.clear();
+  recoPhi.clear();
+  recoEta.clear();
+  recoX.clear();
+  recoY.clear();
+  recoZ.clear();
+  recoEvent.clear();
+  recoID.clear();
+
+  caloT.clear();
+  caloE.clear();
+  caloX.clear();
+  caloY.clear();
+  caloZ.clear();
+  caloTheta.clear();
+  caloPhi.clear();
+  caloEta.clear();
+  caloPDG.clear();
+  caloEvent.clear();
+  caloSubEvent.clear();
+  caloTrackId.clear();
+  caloID.clear();
+  caloDecay.clear();
+  caloSourceX.clear();
+  caloSourceY.clear();
+  caloSourceZ.clear();
+  caloSourceT.clear();
+}
 
 // ------------ method for histogram booking ------------
 void BtlClustering::bookHistograms(DQMStore::IBooker& ibook, edm::Run const& run, edm::EventSetup const& iSetup) {
@@ -585,10 +517,10 @@ void BtlClustering::bookHistograms(DQMStore::IBooker& ibook, edm::Run const& run
 
   // Create a file with jobId
   std::stringstream ss;
-  ss << "tree_" << jobId_ << ".root";
+  ss << "btl_" << jobId_ << ".root";
   std::string filename = ss.str();
   myFile = new TFile(filename.c_str(), "RECREATE");
-  
+
   simTree = new TTree("simTree", "A tree with simulation hit information");
   simTree->Branch("pdg",      &simPDG);
   simTree->Branch("time",     &simT);
