@@ -59,7 +59,9 @@
 #include "Geometry/Records/interface/EcalBarrelGeometryRecord.h"
 #include "CondFormats/EcalObjects/interface/EcalChannelStatus.h"
 #include "CondFormats/DataRecord/interface/EcalChannelStatusRcd.h"
-#include "Geometry/CaloTopology/interface/EcalTrigTowerConstituentsMap.h"
+
+#include "PhysicsTools/TensorFlow/interface/TensorFlow.h"
+#include "FWCore/Framework/interface/one/EDAnalyzer.h"
 
 #include <map>
 #include <vector>
@@ -91,11 +93,10 @@ public:
 
 protected: 
   void bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::EventSetup const&) override;
-
   void fillMcTruth(std::vector<SimTrack> &simTracks, std::vector<SimVertex> &simVertices);
-
+  void beginJob() override;
+  void endJob() override;
   void analyze(const edm::Event&, const edm::EventSetup&) override;
-
   void clearEventData();
 
 private:
@@ -104,6 +105,17 @@ private:
   std::string ValidationCollection;
   std::string jobId;
   int maskedEcalChannelStatusThreshold;
+
+  tensorflow::GraphDef* graphDef;
+  tensorflow::Session* session;
+  std::string graphPath;
+  std::string inputTensorName;
+  std::string outputTensorName;
+
+  int cropSize;
+  int maxClusters;
+  int overlapLimit;
+  double seedThreshold;
 
   edm::EDGetTokenT<edm::PCaloHitContainer> EBHitsToken;
   edm::EDGetTokenT<PEcalValidInfo> ValidationCollectionToken;
@@ -118,7 +130,6 @@ private:
   edm::ESGetToken<CaloSubdetectorGeometry, EcalBarrelGeometryRecord> barrelGeomToken;
   edm::ESGetToken<CaloGeometry, CaloGeometryRecord> ecalGeomToken;
   edm::ESGetToken<EcalChannelStatus, EcalChannelStatusRcd> ecalStatusToken;
-  edm::ESGetToken<EcalTrigTowerConstituentsMap, IdealGeometryRecord> ttmapToken;
   // edm::EDGetTokenT<CrossingFrame<PSimHit>> btlSimHitsToken;
   // edm::ESGetToken<MTDGeometry, MTDDigiGeometryRecord> mtdgeoToken;
   // edm::ESGetToken<MTDTopology, MTDTopologyRcd> mtdtopoToken;
@@ -201,6 +212,14 @@ private:
   // std::vector<float> btlZ;
   // std::vector<int>   btlEvent;
   // std::vector<uint32_t> btlType;
+
+  std::vector<int>   mlEvent;
+  std::vector<int>   mlN;        // which sample (0..numClusters-1)
+  std::vector<int>   mlK;        // which cluster slot (0..maxClusters-1)
+  std::vector<float> mlCenterX;
+  std::vector<float> mlCenterY;
+  std::vector<float> mlEnergy;
+  std::vector<float> mlSeed;
 
   std::map<unsigned, unsigned> geantToIndex_;
 };

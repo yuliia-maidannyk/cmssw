@@ -15,7 +15,14 @@ transClustering = DQMEDAnalyzer("TransClustering",
     HepMCProductLabel           = cms.InputTag('generatorSmeared'),
     particleFlowClusterECAL     = cms.InputTag("particleFlowClusterECAL"),
     btlSimHits                  = cms.InputTag("mix", "g4SimHitsFastTimerHitsBarrel"),
-    maskedEcalChannelStatusThreshold = cms.int32(1)
+    maskedEcalChannelStatusThreshold = cms.int32(1),
+    graphPath                   = cms.string("/feynman/home/dphp/ym280958/scratch/CMSSW_15_1_0_pre1/src/graph.pb"),
+    inputTensorName             = cms.string("input"),
+    outputTensorName            = cms.string("output"),
+    cropSize                    = cms.int32(7),
+    maxClusters                 = cms.int32(20),
+    overlapLimit                = cms.int32(7),
+    seedThreshold               = cms.double(0.54)
 )
 
 
