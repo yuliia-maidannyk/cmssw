@@ -25,6 +25,7 @@
 #include "QGSPCMS_FTFP_BERT_EMN.h"
 #include "QGSPCMS_FTFP_BERT_EMY.h"
 #include "QGSPCMS_FTFP_BERT_EMZ.h"
+#include "SimG4Core/PhysicsLists/interface/Pi0MassModifier.h"
 
 DEFINE_PHYSICSLIST(DummyPhysics);
 typedef FTFCMS_BIC FTF_BIC;

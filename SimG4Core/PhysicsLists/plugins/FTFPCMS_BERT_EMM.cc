@@ -1,6 +1,7 @@
 #include "FTFPCMS_BERT_EMM.h"
 #include "SimG4Core/PhysicsLists/interface/CMSEmStandardPhysics.h"
 #include "SimG4Core/PhysicsLists/interface/CMSHadronPhysicsFTFP_BERT.h"
+#include "SimG4Core/PhysicsLists/interface/Pi0MassModifier.h"
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
 
 #include "G4DecayPhysics.hh"
@@ -60,5 +61,11 @@ FTFPCMS_BERT_EMM::FTFPCMS_BERT_EMM(const edm::ParameterSet& p) : PhysicsList(p) 
 
     // Ion Physics
     RegisterPhysics(new G4IonPhysics(ver));
+  }
+
+  // Custom particle constructor (if present in configuration)
+  if (p.exists("Pi0MassModifier")) {
+    RegisterPhysics(new Pi0MassModifier(p.getParameter<edm::ParameterSet>("Pi0MassModifier")));
+    edm::LogInfo("PhysicsList") << "Pi0MassModifier physics constructor enabled";
   }
 }
