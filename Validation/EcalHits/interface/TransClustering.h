@@ -50,6 +50,12 @@
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
 #include "PhysicsTools/ONNXRuntime/interface/ONNXRuntime.h"
 
+#include "TrackingTools/TrajectoryParametrization/interface/GlobalTrajectoryParameters.h"
+#include "TrackPropagation/SteppingHelixPropagator/interface/SteppingHelixPropagator.h"
+#include "MagneticField/Records/interface/IdealMagneticFieldRecord.h"
+#include "MagneticField/Engine/interface/MagneticField.h"
+#include "CommonTools/BaseParticlePropagator/interface/BaseParticlePropagator.h"
+
 #include <map>
 #include <vector>
 #include <TFile.h>
@@ -107,6 +113,7 @@ private:
   //edm::ESGetToken<CaloSubdetectorGeometry, EcalBarrelGeometryRecord> barrelGeomToken;
   edm::ESGetToken<CaloGeometry, CaloGeometryRecord> ecalGeomToken;
   edm::ESGetToken<EcalChannelStatus, EcalChannelStatusRcd> ecalStatusToken;
+  edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> magFieldToken;
 
   TTree* simTree;
   TTree* recoTree;
@@ -138,7 +145,7 @@ private:
   std::vector<int>      recoIPhi;
   std::vector<float>    recoValues;
 
-  std::vector<float>    caloT;
+  std::vector<float>    caloR;
   std::vector<float>    caloE;
   std::vector<float>    caloPPt;
   std::vector<float>    caloPPhi;

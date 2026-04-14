@@ -26,5 +26,7 @@
 <use name="Geometry/Records"/>
 <use name="Calibration/IsolatedParticles"/>
 <use name="PhysicsTools/ONNXRuntime"/>
+<use name="CommonTools/BaseParticlePropagator"/>
+<use name="FastSimulation/Particle"/>
 <use name="eigen"/>
 <flags EDM_PLUGIN="1"/>

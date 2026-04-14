@@ -8,7 +8,7 @@
 
 #include <fstream>
 
-#define INFER 1
+#define INFER 0
 #define PRINT_DEBUG 0
 
 std::vector<float> build_energy_map(
@@ -83,6 +83,7 @@ TransClustering::TransClustering(const edm::ParameterSet& iConfig)
   // ecalStatusToken = esConsumes<EcalChannelStatus, EcalChannelStatusRcd>();
   ecalGeomToken = esConsumes<CaloGeometry, CaloGeometryRecord, edm::Transition::BeginRun>();
   ecalStatusToken = esConsumes<EcalChannelStatus, EcalChannelStatusRcd, edm::Transition::BeginRun>();
+  magFieldToken = esConsumes<MagneticField, IdealMagneticFieldRecord>();
 }
 
 TransClustering::~TransClustering() {}
@@ -153,6 +154,8 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 
   edm::Handle<reco::PFClusterCollection> pfClusters;
   iEvent.getByToken(pfClusterToken, pfClusters);
+
+  const MagneticField* magField_ = &iSetup.getData(magFieldToken);
 
   // ***************** Check for photon conversions *****************
   
@@ -378,10 +381,10 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
       // }
       seed_isConverted.push_back(static_cast<bool>(isConverted));
       seed_ieta.push_back(ieta + 85);
-      iphi = iphi * (180.0 / M_PI);         // (-180, +180) degrees
-      iphi = std::fmod(iphi + 10.0, 360.0); // apply offset, wrap to [0, 360)
-      iphi = iphi + 1.0;                    // 1-based index [1, 360]
-      seed_iphi.push_back(iphi);
+      float iphi_shifted = iphi * (180.0 / M_PI);         // (-180, +180) degrees
+      iphi_shifted = std::fmod(iphi + 10.0, 360.0); // apply offset, wrap to [0, 360)
+      iphi_shifted = iphi + 1.0;                    // 1-based index [1, 360]
+      seed_iphi.push_back(iphi_shifted);
       if (PRINT_DEBUG) {
         std::cout << "  GenParticle momentum points to: ieta=" << ieta << " iphi=" << iphi << std::endl;
       }
@@ -414,6 +417,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     
     // Access sim clusters associated with this calo particle
     const auto& simClusters = cp.simClusters();
+
     // std::cout << "GenParticle has " << simClusters.size() << " associated sim clusters." << std::endl;
     sc_number = 0;
     for (const auto& sc : simClusters) {
@@ -424,23 +428,65 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 
       caloPDG.push_back(sc->pdgId());
       caloE.push_back(sc->energy());
-      caloPEta.push_back(sc->eta());
-      caloPPhi.push_back(sc->phi());
+      double eta = sc->eta();
+      double phi = sc->phi();
+      caloPEta.push_back(eta);
+      caloPPhi.push_back(phi);
       caloPPt.push_back(sc->pt());
       caloTrackId.push_back(sc->g4Track_begin()->trackId());
       caloEvent.push_back(iEvent.id().event());
 
       // Get the sim hits associated with this sim cluster
-        const auto& hitAndEnergies = sc->hits_and_energies();
-        for (const auto& hitAndEnergy : hitAndEnergies) {
-          DetId hitId = hitAndEnergy.first;
-          EBDetId ebid(hitId);
-          //std::cout << "    SimHit ieta: " << ebid.ieta() << ", iphi: " << ebid.iphi() << std::endl;
-          // Store all (sc_number, simhit energy) associated with this (ieta, iphi) pair
-          float simHitEnergy = hitAndEnergy.second;
-          caloMap[std::make_pair(ebid.ieta(), ebid.iphi())].push_back(std::make_pair(sc_number, simHitEnergy));
-          nsimhits++;
-        }
+      const auto& hitAndEnergies = sc->hits_and_energies();
+      for (const auto& hitAndEnergy : hitAndEnergies) {
+        DetId hitId = hitAndEnergy.first;
+        EBDetId ebid(hitId);
+        //std::cout << "    SimHit ieta: " << ebid.ieta() << ", iphi: " << ebid.iphi() << std::endl;
+        // Store all (sc_number, simhit energy) associated with this (ieta, iphi) pair
+        float simHitEnergy = hitAndEnergy.second;
+        caloMap[std::make_pair(ebid.ieta(), ebid.iphi())].push_back(std::make_pair(sc_number, simHitEnergy));
+        nsimhits++;
+      }
+
+      const auto& g4tk = *(sc->g4Track_begin());
+
+      // Get production vertex
+      double vx = 0., vy = 0., vz = 0.;
+      int vtxIdx = g4tk.vertIndex();
+      if (vtxIdx >= 0 && vtxIdx < (int)simVertexes->size()) {
+          const SimVertex& vtx = (*simVertexes)[vtxIdx];
+          vx = vtx.position().x();
+          vy = vtx.position().y();
+          vz = vtx.position().z();
+      }
+      caloR.push_back(sqrt(vx*vx + vy*vy));
+
+      // Build RawParticle
+      math::XYZTLorentzVector mom = g4tk.momentum();
+      math::XYZTLorentzVector pos(vx, vy, vz, 0.);
+
+      RawParticle particle(mom, pos, g4tk.charge());
+
+      float strength = magField_->inTesla(GlobalPoint(vx,vy,vz)).z();
+      BaseParticlePropagator prop(particle, 0., 0., strength);
+      prop.setMagneticField(strength);
+      prop.propagateToEcalEntrance(false);
+
+      if (prop.getSuccess() != 0) {
+          math::XYZTLorentzVector ecalPos = prop.particle().vertex();
+          double hitEta = ecalPos.eta();
+          double hitPhi = ecalPos.phi();
+          
+          float ieta = static_cast<float>(hitEta) / 0.0174;
+          float iphi_rad = static_cast<float>(hitPhi);
+          
+          caloEta.push_back(ieta);
+          caloPhi.push_back(iphi_rad);
+      } else {
+          // propagation failed, fall back
+          caloEta.push_back(static_cast<float>(sc->eta()) / 0.0174);
+          caloPhi.push_back(static_cast<float>(sc->phi()));
+      }
       sc_number++;
     }
     if (PRINT_DEBUG) {
@@ -820,7 +866,6 @@ void TransClustering::clearEventData() {
   recoIPhi.clear();
   recoValues.clear();
 
-  caloT.clear();
   caloE.clear();
   caloPPt.clear();
   caloPPhi.clear();
@@ -835,6 +880,7 @@ void TransClustering::clearEventData() {
   caloValues.clear();
   caloValuesE.clear();
   caloTrackId.clear();
+  caloR.clear();
 
   genT.clear();
   genE.clear();
@@ -946,7 +992,7 @@ void TransClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::E
   recoTree->Branch("mapValues", &recoValues);
 
   caloTree = fs->make<TTree>("caloTree", "A tree with calo hit information");
-  caloTree->Branch("time",      &caloT);
+  caloTree->Branch("radius",    &caloR);
   caloTree->Branch("energy",    &caloE);
   caloTree->Branch("pt",        &caloPPt);
   caloTree->Branch("phi",       &caloPPhi);
