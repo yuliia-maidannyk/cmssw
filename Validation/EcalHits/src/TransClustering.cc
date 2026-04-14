@@ -2,7 +2,6 @@
 #include "DQMServices/Core/interface/DQMStore.h"
 #include "FWCore/Utilities/interface/Exception.h"
 #include <DataFormats/EcalDetId/interface/EBDetId.h>
-#include "Geometry/EcalAlgo/interface/EcalBarrelGeometry.h"
 #include "Calibration/IsolatedParticles/interface/DetIdFromEtaPhi.h"
 #include "Validation/EcalHits/interface/TransClustering.h"
 #include "Validation/EcalHits/interface/PreProcessing.h"
@@ -11,22 +10,6 @@
 
 #define INFER 1
 #define PRINT_DEBUG 0
-
-// namespace {
-// int currentLinuxThreadCount() {
-//   std::ifstream status("/proc/self/status");
-//   std::string key;
-//   while (status >> key) {
-//     if (key == "Threads:") {
-//       int n = 0;
-//       status >> n;
-//       return n;
-//     }
-//     status.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-//   }
-//   return -1;
-// }
-// }
 
 std::vector<float> build_energy_map(
     const std::vector<int>&   ieta_vec,
@@ -74,12 +57,8 @@ TransClustering::TransClustering(const edm::ParameterSet& iConfig)
     input_shapes_(),
     g4InfoLabel(iConfig.getParameter<std::string>("moduleLabelG4")),
     EBHitsCollection(iConfig.getParameter<std::string>("EBHitsCollection")),
-    ValidationCollection(iConfig.getParameter<std::string>("ValidationCollection")),
     jobId(iConfig.getParameter<std::string>("jobId")),
     maskedEcalChannelStatusThreshold(iConfig.getParameter<int>("maskedEcalChannelStatusThreshold")),
-    // graphPath(iConfig.getParameter<std::string>("graphPath")),
-    // inputTensorName(iConfig.getParameter<std::string>("inputTensorName")),
-    // outputTensorName(iConfig.getParameter<std::string>("outputTensorName")),
     cropSize(iConfig.getParameter<int>("cropSize")),
     maxClusters(iConfig.getParameter<int>("maxClusters")),
     overlapLimit(iConfig.getParameter<int>("overlapLimit")),
@@ -87,52 +66,26 @@ TransClustering::TransClustering(const edm::ParameterSet& iConfig)
 {
   const int onnxIntraOpThreads = iConfig.getUntrackedParameter<int>("onnxIntraOpThreads", 16);
   const int onnxInterOpThreads = iConfig.getUntrackedParameter<int>("onnxInterOpThreads", 1);
-  // const int threadsBeforeOnnx = currentLinuxThreadCount();
   auto sessOpts = ONNXRuntime::defaultSessionOptions(Backend::cpu);
   sessOpts.SetIntraOpNumThreads(onnxIntraOpThreads);
   sessOpts.SetInterOpNumThreads(onnxInterOpThreads);
   onnx_ = std::make_unique<ONNXRuntime>(iConfig.getParameter<edm::FileInPath>("model_path").fullPath(), &sessOpts);
-  // const int threadsAfterOnnx = currentLinuxThreadCount();
-  // edm::LogVerbatim("TransClustering") << "ONNX thread config: intra=" << onnxIntraOpThreads
-  //                                     << " inter=" << onnxInterOpThreads
-  //                                     << " | Linux threads before=" << threadsBeforeOnnx
-  //                                     << " after=" << threadsAfterOnnx
-  //                                     << " delta=" << (threadsAfterOnnx - threadsBeforeOnnx);
 
   EBrechitCollection_Token = consumes<EBRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBrechitCollection"));
-  EBuncalibrechitCollection_Token = consumes<EBUncalibratedRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBuncalibrechitCollection"));
   EBHitsToken = consumes<edm::PCaloHitContainer>(edm::InputTag(std::string(g4InfoLabel), std::string(EBHitsCollection)));
-  ValidationCollectionToken = consumes<PEcalValidInfo>(edm::InputTag(std::string(g4InfoLabel), std::string(ValidationCollection)));
   genParticleToken = consumes<reco::GenParticleCollection>(iConfig.getParameter<edm::InputTag>("genParticles"));
   SimTrackToken = consumes<edm::SimTrackContainer>(iConfig.getParameter<edm::InputTag>("simTrackCollection"));
   SimVertexToken = consumes<edm::SimVertexContainer>(iConfig.getParameter<edm::InputTag>("simVertexCollection"));
   CaloParticle_Token = consumes<CaloParticleCollection>(iConfig.getParameter<edm::InputTag>("CaloParticleCollection"));
-  HepMCToken = consumes<edm::HepMCProduct>(iConfig.getParameter<edm::InputTag>("HepMCProductLabel"));
   pfClusterToken = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECAL"));
-  barrelGeomToken = esConsumes<CaloSubdetectorGeometry, EcalBarrelGeometryRecord>(edm::ESInputTag("", "EcalBarrel"));
-  ecalGeomToken = esConsumes<CaloGeometry, CaloGeometryRecord>();
-  ecalStatusToken = esConsumes<EcalChannelStatus, EcalChannelStatusRcd>();
-  // mtdgeoToken = esConsumes<MTDGeometry, MTDDigiGeometryRecord>();
-  // mtdtopoToken = esConsumes<MTDTopology, MTDTopologyRcd>();
-  // btlSimHitsToken = consumes<CrossingFrame<PSimHit>>(iConfig.getParameter<edm::InputTag>("btlSimHits"));
-  // configure logging to show warnings (see table below)
-  // tensorflow::setLogging("2");
+  //barrelGeomToken = esConsumes<CaloSubdetectorGeometry, EcalBarrelGeometryRecord>(edm::ESInputTag("", "EcalBarrel"));
+  // ecalGeomToken = esConsumes<CaloGeometry, CaloGeometryRecord>();
+  // ecalStatusToken = esConsumes<EcalChannelStatus, EcalChannelStatusRcd>();
+  ecalGeomToken = esConsumes<CaloGeometry, CaloGeometryRecord, edm::Transition::BeginRun>();
+  ecalStatusToken = esConsumes<EcalChannelStatus, EcalChannelStatusRcd, edm::Transition::BeginRun>();
 }
 
 TransClustering::~TransClustering() {}
-
-// void TransClustering::beginJob() {
-//   graphDef = tensorflow::loadGraphDef(graphPath);
-//   session = tensorflow::createSession(graphDef);
-// }
-
-// void TransClustering::endJob() {
-//   // close the session
-//   tensorflow::closeSession(session);
-//   // delete the graph
-//   delete graphDef;
-//   graphDef = nullptr;
-// }
 
 // ------------ method called for each event  ------------
 void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSetup) {
@@ -148,54 +101,10 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     std::cout << "Processed " << eventCount << " events" << std::endl;
   }
 
-  // ***************** Get the Ecal Barrel Geometry *****************
-
-  const CaloGeometry& geo = iSetup.getData(ecalGeomToken);
-  //const CaloSubdetectorGeometry& barrelGeom = iSetup.getData(barrelGeomToken);
-  // Get barrel subgeometry from it - no separate token needed
-  // const CaloSubdetectorGeometry* barrelGeom = geo.getSubdetectorGeometry(DetId::Ecal, EcalBarrel);
-  const EcalBarrelGeometry* barrelGeom = dynamic_cast<const EcalBarrelGeometry*>(geo.getSubdetectorGeometry(DetId::Ecal, EcalBarrel));
-
-  // auto geometryHandle = iSetup.getTransientHandle(mtdgeoToken);
-  // const MTDGeometry* btlGeom = geometryHandle.product();
-  // auto topologyHandle = iSetup.getTransientHandle(mtdtopoToken);
-  // const MTDTopology* topology = topologyHandle.product();
-
-  edm::ESHandle<EcalChannelStatus> ecalStatus;
-  ecalStatus = iSetup.getHandle(ecalStatusToken);
-
-  // XXX: All the following can be built at the beginning of a job
-  // Store EB: DetId <==> vector<int> (subdet, ieta, iphi, status)
-  std::map<DetId, std::vector<int> > EcalAllDeadChannelsBitMap;
-  EcalAllDeadChannelsBitMap.clear();
-
-  // Loop over EB ...
-  for (int ieta = -85; ieta <= 85; ieta++) {
-    for (int iphi = 0; iphi <= 360; iphi++) {
-      if (!EBDetId::validDetId(ieta, iphi))
-        continue;
-
-      const EBDetId detid = EBDetId(ieta, iphi, EBDetId::ETAPHIMODE);
-      EcalChannelStatus::const_iterator chit = ecalStatus->find(detid);
-      // refer https://twiki.cern.ch/twiki/bin/viewauth/CMS/EcalChannelStatus
-      int status = (chit != ecalStatus->end()) ? chit->getStatusCode() & 0x1F : -1;
-
-      if (status >= maskedEcalChannelStatusThreshold) {
-        // std::cout << "Masked EB channel: ieta=" << ieta << ", iphi=" << iphi << ", status=" << status << std::endl;
-        std::vector<int> bitVec;
-        bitVec.push_back(1);
-        bitVec.push_back(ieta);
-        bitVec.push_back(iphi);
-        bitVec.push_back(status);
-        EcalAllDeadChannelsBitMap.insert(std::make_pair(detid, bitVec));
-      }
-    }  // end loop iphi
-  }  // end loop ieta
-
 #if INFER
   std::vector<std::vector<int>> dead_grid(361, std::vector<int>(170, 1)); // default = 1
 
-  for (const auto& [detid, bitVec] : EcalAllDeadChannelsBitMap) {
+  for (const auto& [detid, bitVec] : EcalAllDeadChannelsBitMap_) {
       int ieta = bitVec[1];
       int iphi = bitVec[2];
       int status = bitVec[3];
@@ -234,10 +143,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 
   edm::Handle<reco::GenParticleCollection> genParticles;
   iEvent.getByToken(genParticleToken, genParticles);
-
-  // edm::Handle<CrossingFrame<PSimHit>> btlSimHandle;
-  // iEvent.getByToken(btlSimHitsToken, btlSimHandle);
-  // MixCollection<PSimHit> btlSimHits(btlSimHandle.product());
   
   const EBRecHitCollection *EBRecHit = nullptr;
   edm::Handle<EBRecHitCollection> EcalRecHitEB;
@@ -245,9 +150,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   if (EcalRecHitEB.isValid()) {
     EBRecHit = EcalRecHitEB.product();
   }
-
-  edm::Handle<edm::HepMCProduct> MCEvt;
-  iEvent.getByToken(HepMCToken, MCEvt);
 
   edm::Handle<reco::PFClusterCollection> pfClusters;
   iEvent.getByToken(pfClusterToken, pfClusters);
@@ -364,9 +266,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     float pt     = genParticle.pt();
     float eta    = genParticle.eta();
     float phi    = genParticle.phi();
-    //float theta  = genParticle.theta();
     float energy = genParticle.energy();
-    //int status = genParticle.status();
     
     // Access vertex information:
     float vx = genParticle.vx();
@@ -452,7 +352,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
       if (sctheta < 0) sctheta += M_PI; // ensure sctheta is in [0, pi]
       
       double ScEta = -log(tan(sctheta / 2.));
-      //double ScPhi = phi < 0 ? phi + 2*M_PI : phi;
 
       ieta = static_cast<float>(ScEta) / 0.0174; // convert to crystal index (float)
       iphi = static_cast<float>(phi); // convert to crystal index (float)
@@ -629,7 +528,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   std::vector<float> map = build_energy_map(ieta_vec, iphi_vec, energy_vec);
   apply_blackout(map, seed_iphi, seed_ieta, seed_isConverted);
 
-  std::cout << "Map size: " << map.size() << " (should be 61730 for 361x170)" << std::endl;
+  std::cout << "Map size: " << map.size() << " (should be 61370 for 361x170)" << std::endl;
   std::cout << "Crop Size: " << cropSize << std::endl;
   std::cout << "Seed Threshold: " << seedThreshold << std::endl;
   std::cout << "Overlap Limit: " << overlapLimit << std::endl;
@@ -699,7 +598,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     pfE.push_back(corr_E);
 
     GlobalPoint gp(pf.position().x(), pf.position().y(), pf.position().z());
-    DetId closestCell = barrelGeom->getClosestCell(gp);
+    DetId closestCell = barrelGeom_->getClosestCell(gp);
     EBDetId ebid(closestCell);
     int ieta = ebid.ieta();
     int iphi = ebid.iphi();
@@ -708,7 +607,7 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     // double exact_phi = gp.phi().value();
     
     // Get crystal center position
-    // GlobalPoint cellCenter = barrelGeom->getGeometry(closestCell)->getPosition();
+    // GlobalPoint cellCenter = barrelGeom_->getGeometry(closestCell)->getPosition();
 
     // // Calculate fractional offset from crystal center
     // double deltaEta = exact_eta - cellCenter.eta();
@@ -728,176 +627,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
   }
 
 #if INFER
-  // ------------------------------- EXAMPLE ------------------------------- 
-  // create an input tensor
-  // tensorflow::Tensor input1(tensorflow::DT_FLOAT, { 1, cropSize, cropSize, maxClusters});
-  // tensorflow::Tensor input2(tensorflow::DT_FLOAT, { 1, maxClusters, 2});
-  // tensorflow::Tensor input3(tensorflow::DT_INT32, { 1, maxClusters});
-  // tensorflow::Tensor input4(tensorflow::DT_FLOAT, { 1, cropSize, cropSize, maxClusters});
-
-  // // fill the tensor with your input data
-  // for (int i = 0; i < maxClusters; i++) {
-  //   for (int j = 0; j < cropSize; j++) {
-  //     for (int k = 0; k < cropSize; k++) {
-  //       input1.tensor<float, 4>()(0, j, k, i) = float(1);
-  //       input4.tensor<float, 4>()(0, j, k, i) = float(1);
-  //     }
-  // }
-  //   input2.tensor<float, 3>()(0, i, 0) = float(1);
-  //   input2.tensor<float, 3>()(0, i, 1) = float(1);
-  //   input3.matrix<int32_t>()(0, i) = int32_t(1);
-  // }
-
-  // // run the evaluation
-  // std::vector<tensorflow::Tensor> outputs;
-  // tensorflow::run(session, {{"inp1:0", input1}, {"inp2:0", input2}, {"inp3:0", input3}, {"inp4:0", input4}},
-  //                          {"center:0", "energy:0", "seed:0"}, &outputs);
-
-  // // process the output tensor
-  // //auto center = outputs[0].tensor<float, 3>();  // shape [N, 20, 2]
-  // auto energy = outputs[1].tensor<float, 3>();  // shape [N, 20, 1]
-  // //auto seed   = outputs[2].tensor<float, 3>();  // shape [N, 20, 1]
-  // for (int i = 0; i < maxClusters; i++) {
-  //   std::cout << "Energy[" << i << "] = " << energy(0, i, 0) << std::endl;
-  // }
-
-  // // -----------------------------------------------------------------------------------------
-  // int numClusters = X.size();
-  // std::cout << "Number of clusters to run through the model: " << numClusters << std::endl;
-
-  // std::vector<std::vector<int32_t>> abs_pos(numClusters, std::vector<int32_t>(maxClusters, 0)); // 1D flattened absolute positions
-  // for (int n = 0; n < numClusters; ++n) {
-  //     for (int k = 0; k < maxClusters; ++k) {
-  //         int center_ieta = static_cast<int>(indices[n][k](0,0));
-  //         int center_iphi = static_cast<int>(indices[n][k](1,0));
-  //         int val = center_iphi + 170 * center_ieta;
-  //         if (val == -171)  // corresponds to (-1, -1)
-  //             val = 0;
-  //         abs_pos[n][k] = val;
-  //     }
-  // }
-
-  // int r_eff = (cropSize + overlapLimit) - 1;
-
-  // // Position relative to the center of the effective window
-  // std::vector<std::vector<std::array<float, 2>>> rel_pos(
-  //     numClusters, std::vector<std::array<float, 2>>(maxClusters));
-  // // Initialize with -1
-  // for (int n = 0; n < numClusters; ++n) {
-  //     for (int i = 0; i < maxClusters; ++i) {
-  //         rel_pos[n][i][0] = -1.0f;
-  //         rel_pos[n][i][1] = -1.0f;
-  //     }
-  // }
-  // for (int n = 0; n < numClusters; ++n) {
-  //     int center_ieta = static_cast<int>(indices[n][0](0,0)); // Highest Edep
-  //     int center_iphi = static_cast<int>(indices[n][0](1,0)); // Highest Edep
-  //     for (int k = 0; k < maxClusters; ++k) {
-  //         int ieta = static_cast<int>(indices[n][k](0,0));
-  //         int iphi = static_cast<int>(indices[n][k](1,0));
-  //         if (ieta > -1) {rel_pos[n][k][0] = float(ieta - center_ieta) / float(r_eff);}
-  //         if (iphi > -1) {rel_pos[n][k][1] = float(iphi - center_iphi) / float(r_eff);}
-  //     }
-  // }
-
-  // tensorflow::Tensor input1(tensorflow::DT_FLOAT, { numClusters, cropSize, cropSize, maxClusters});
-  // tensorflow::Tensor input2(tensorflow::DT_FLOAT, { numClusters, maxClusters, 2});
-  // tensorflow::Tensor input3(tensorflow::DT_INT32, { numClusters, maxClusters});
-  // tensorflow::Tensor input4(tensorflow::DT_FLOAT, { numClusters, cropSize, cropSize, maxClusters});
-
-  // tensorflow::TTypes<float, 4>::Tensor input_tensor1 = input1.tensor<float, 4>();
-  // tensorflow::TTypes<float, 3>::Tensor input_tensor2 = input2.tensor<float, 3>();
-  // tensorflow::TTypes<float, 4>::Tensor input_tensor4 = input4.tensor<float, 4>();
-
-  // for (int n = 0; n < numClusters; n++) {
-  //   for (int i = 0; i < maxClusters; i++) {
-  //     const Eigen::MatrixXf& mat1 = X[n][i]; // 7x7
-  //     Eigen::MatrixXf mat2 = dead_masks[n][i].cast<float>(); // 7x7
-  //     for (int j = 0; j < cropSize; j++) {
-  //       for (int k = 0; k < cropSize; k++) {
-  //           input_tensor1(n, j, k, i) = mat1(j, k);
-  //           input_tensor4(n, j, k, i) = mat2(j, k);
-  //       }
-  //     }
-  //     input_tensor2(n, i, 0) = rel_pos[n][i][0];
-  //     input_tensor2(n, i, 1) = rel_pos[n][i][1];
-  //     input3.matrix<int32_t>()(n, i) = abs_pos[n][i];
-  //   }
-  // }
-
-  // if (PRINT_DEBUG) {
-  //   std::cout << "=== INPUT SANITY CHECK ===" << std::endl;
-  //   for (int i = 0; i < 3; i++) {
-  //       std::cout << "input1(0, 3, 3, " << i << ") = " << input_tensor1(0, 3, 3, i) << std::endl;
-  //       std::cout << "input2(0, " << i << ", 0) = " << input_tensor2(0, i, 0) << std::endl;
-  //       std::cout << "input2(0, " << i << ", 1) = " << input_tensor2(0, i, 1) << std::endl;
-  //       std::cout << "input3(0, " << i << ") = " << input3.matrix<int32_t>()(0, i) << std::endl;
-  //       std::cout << "input4(0, 3, 3, " << i << ") = " << input_tensor4(0, 3, 3, i) << std::endl;
-  //   }
-  // }
-
-  // // print input tensor shapes
-  // std::cout << "Input1 shape: (" << input1.dim_size(0) << ", " << input1.dim_size(1) << ", " << input1.dim_size(2) << ", " << input1.dim_size(3) << ")" << std::endl;
-  // std::cout << "Input2 shape: (" << input2.dim_size(0) << ", " << input2.dim_size(1) << ", " << input2.dim_size(2) << ")" << std::endl;
-  // std::cout << "Input3 shape: (" << input3.dim_size(0) << ", " << input3.dim_size(1) << ")" << std::endl;
-  // std::cout << "Input4 shape: (" << input4.dim_size(0) << ", " << input4.dim_size(1) << ", " << input4.dim_size(2) << ", " << input4.dim_size(3) << ")" << std::endl;
-
-  // // run the evaluation
-  // std::vector<tensorflow::Tensor> outputs;
-  // tensorflow::run(session, {{"inp1:0", input1}, {"inp2:0", input2}, {"inp3:0", input3}, {"inp4:0", input4}},
-  //                          {"center:0", "energy:0", "seed:0"}, &outputs);
-
-  // // process the output tensor
-  // tensorflow::TTypes<float, 3>::Tensor center_pr = outputs[0].tensor<float, 3>();  // shape [N, 20, 2]
-  // tensorflow::TTypes<float, 3>::Tensor energy_pr = outputs[1].tensor<float, 3>();  // shape [N, 20, 1]
-  // tensorflow::TTypes<float, 3>::Tensor seed_pr   = outputs[2].tensor<float, 3>();  // shape [N, 20, 1]
-  // // convert 
-  // std::vector<std::vector<std::pair<float, float>>> centers(numClusters, std::vector<std::pair<float, float>>(maxClusters));
-  // std::vector<std::vector<float>> energies(numClusters, std::vector<float>(maxClusters));
-  // std::vector<std::vector<float>> seeds(numClusters, std::vector<float>(maxClusters));
-
-  // for (int n = 0; n < numClusters; n++) {
-  //     for (int i = 0; i < maxClusters; i++) {
-  //         centers[n][i] = {
-  //             center_pr(n, i, 0) + indices[n][i](0) - cropSize / 2,
-  //             center_pr(n, i, 1) + indices[n][i](1) - cropSize / 2
-  //         };
-  //         energies[n][i] = energy_pr(n, i, 0) * 100.0f;
-  //         seeds[n][i] = seed_pr(n, i, 0);
-  //     }
-  // }
-
-  // for (int i = 0; i < maxClusters; i++) {
-  //   std::cout << "Energy[" << i << "] = " << energies[0][i] << std::endl;
-  //   std::cout << "Seed[" << i << "] = " << seeds[0][i] << std::endl;
-  //   std::cout << "Center[" << i << "] = (" << centers[0][i].first << ", " << centers[0][i].second << ")" << std::endl;
-  // }
-
-  // // print the truth
-  // for (size_t i = 0; i < genPDG.size(); ++i) {
-  //   std::cout << "GenParticle " << i << ": PDG=" << genPDG[i] 
-  //             << ", E=" << genE[i] 
-  //             << ", eta=" << genEta[i] + 85 
-  //             << ", phi=" << genPhi[i] 
-  //             << ", isConverted=" << genIsConverted[i] 
-  //             << ", convR=" << genConvR[i] 
-  //             << ", convZ=" << genConvZ[i] 
-  //             << std::endl;
-  // }
-
-  // // Store
-  // for (int n = 0; n < numClusters; n++) {
-  //   for (int i = 0; i < maxClusters; i++) {
-  //       mlEvent.push_back(iEvent.id().event());
-  //       mlN.push_back(n);
-  //       mlK.push_back(i);
-  //       mlCenterX.push_back(centers[n][i].first);
-  //       mlCenterY.push_back(centers[n][i].second);
-  //       mlEnergy.push_back(energies[n][i]);
-  //       mlSeed.push_back(seeds[n][i]);
-  //   }
-  // }
-  // mlTree->Fill();
 
   // -------------------------------------------------------
   // inp1: (batch, 7, 7, 20) = 1 * 7 * 7 * 20 = 980 floats
@@ -991,34 +720,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
       }
     }
   }
-
-  // // --- fill inp1: energy crops (batch, 7, 7, 20) ---
-  // std::vector<float> &inp1 = data_[0];
-  // for (int k = 0; k < maxClusters; ++k)
-  //   for (int r = 0; r < cropSize; ++r)
-  //     for (int c = 0; c < cropSize; ++c)
-  //       inp1[r * cropSize * maxClusters + c * maxClusters + k] = 1.0f; // channel-last layout
-
-  // // --- fill inp2: relative (ieta, iphi) positions (batch, 20, 2) ---
-  // std::vector<float> &inp2 = data_[1];
-  // for (int k = 0; k < maxClusters; ++k) {
-  //   inp2[k * 2 + 0] = 0.0f; // relative ieta
-  //   inp2[k * 2 + 1] = 0.0f; // relative iphi
-  // }
-
-  // // --- fill inp3: absolute positions (batch, 20) - stored as float ---
-  // // ONNXRuntime FloatArrays is vector<vector<float>>, so int32 must be reinterpret-cast
-  // std::vector<float> &inp3 = data_[2];
-  // for (int k = 0; k < maxClusters; ++k) {
-  //   inp3[k * 1 + 0] = 1.0f;
-  // }
-
-  // // --- fill inp4: dead channel masks (batch, 7, 7, 20) ---
-  // std::vector<float> &inp4 = data_[3];
-  // for (int k = 0; k < maxClusters; ++k)
-  //   for (int r = 0; r < cropSize; ++r)
-  //     for (int c = 0; c < cropSize; ++c)
-  //       inp4[r * cropSize * maxClusters + c * maxClusters + k] = 1.0f;
 
   // --- run inference ---
   std::vector<std::vector<float>> outputs = onnx_->run(input_names_, data_, input_shapes_, {}, numClusters);
@@ -1156,17 +857,6 @@ void TransClustering::clearEventData() {
   pfEta.clear();
   pfE.clear();
 
-  // btlE.clear();
-  // btlT.clear();
-  // btlX.clear();
-  // btlY.clear();
-  // btlZ.clear();
-  // btlLocX.clear();
-  // btlLocY.clear();
-  // btlLocZ.clear();
-  // btlPDG.clear();
-  // btlEvent.clear();
-
 #if INFER
   mlEvent.clear();
   mlN.clear();
@@ -1190,7 +880,46 @@ void TransClustering::fillMcTruth(std::vector<SimTrack> &simTracks, std::vector<
   }
 }
 
-void TransClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::EventSetup const&) {
+void TransClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::EventSetup const& iSetup) {
+
+  // ***************** Get the Ecal Barrel Geometry *****************
+
+  const CaloGeometry& geo = iSetup.getData(ecalGeomToken);
+  //const CaloSubdetectorGeometry& barrelGeom_ = iSetup.getData(barrelGeomToken);
+  // Get barrel subgeometry from it - no separate token needed
+  // const CaloSubdetectorGeometry* barrelGeom_ = geo.getSubdetectorGeometry(DetId::Ecal, EcalBarrel);
+  barrelGeom_ = dynamic_cast<const EcalBarrelGeometry*>(geo.getSubdetectorGeometry(DetId::Ecal, EcalBarrel));
+
+  edm::ESHandle<EcalChannelStatus> ecalStatus;
+  ecalStatus = iSetup.getHandle(ecalStatusToken);
+
+  // XXX: All the following can be built at the beginning of a job
+  // Store EB: DetId <==> vector<int> (subdet, ieta, iphi, status)
+  EcalAllDeadChannelsBitMap_.clear();
+
+  // Loop over EB ...
+  for (int ieta = -85; ieta <= 85; ieta++) {
+    for (int iphi = 0; iphi <= 360; iphi++) {
+      if (!EBDetId::validDetId(ieta, iphi))
+        continue;
+
+      const EBDetId detid = EBDetId(ieta, iphi, EBDetId::ETAPHIMODE);
+      EcalChannelStatus::const_iterator chit = ecalStatus->find(detid);
+      // refer https://twiki.cern.ch/twiki/bin/viewauth/CMS/EcalChannelStatus
+      int status = (chit != ecalStatus->end()) ? chit->getStatusCode() & 0x1F : -1;
+
+      if (status >= maskedEcalChannelStatusThreshold) {
+        // std::cout << "Masked EB channel: ieta=" << ieta << ", iphi=" << iphi << ", status=" << status << std::endl;
+        std::vector<int> bitVec;
+        bitVec.push_back(1);
+        bitVec.push_back(ieta);
+        bitVec.push_back(iphi);
+        bitVec.push_back(status);
+        EcalAllDeadChannelsBitMap_.insert(std::make_pair(detid, bitVec));
+      }
+    }  // end loop iphi
+  }  // end loop ieta
+
   edm::Service<TFileService> fs;
 
   simTree = fs->make<TTree>("simTree", "A tree with simulation hit information");

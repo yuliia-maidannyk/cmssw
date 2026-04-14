@@ -83,7 +83,6 @@ void ManyParticleFlatRandomEGunProducer::produce(Event& e, const EventSetup& es)
 
     const HepPDT::ParticleData* PData = fPDGTable->particle(HepPDT::ParticleID(abs(PartID)));
     double mass = PData->mass().value();
-
     double mom2 = energy * energy - mass * mass;
     double mom  = (mom2 > 0.) ? sqrt(mom2) : 0.;
 
