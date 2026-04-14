@@ -60,8 +60,9 @@
 #include "CondFormats/EcalObjects/interface/EcalChannelStatus.h"
 #include "CondFormats/DataRecord/interface/EcalChannelStatusRcd.h"
 
-#include "PhysicsTools/TensorFlow/interface/TensorFlow.h"
+// #include "PhysicsTools/TensorFlow/interface/TensorFlow.h"
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
+#include "PhysicsTools/ONNXRuntime/interface/ONNXRuntime.h"
 
 #include <map>
 #include <vector>
@@ -81,6 +82,8 @@
 //   int trackId = 0;
 // };
 
+using namespace cms::Ort;
+
 class TransClustering : public DQMOneEDAnalyzer<> {
   typedef std::map<std::pair<int, int>, float> MapType;
   typedef std::map<std::pair<int, int>, std::vector<std::pair<int, float>>> CaloMapType;
@@ -88,29 +91,35 @@ class TransClustering : public DQMOneEDAnalyzer<> {
 public:
   typedef dqm::legacy::DQMStore DQMStore;
 
-  explicit TransClustering(const edm::ParameterSet&);
+  explicit TransClustering(const edm::ParameterSet &);
+
   ~TransClustering() override;
 
 protected: 
   void bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::EventSetup const&) override;
   void fillMcTruth(std::vector<SimTrack> &simTracks, std::vector<SimVertex> &simVertices);
-  void beginJob() override;
-  void endJob() override;
+  // void beginJob() override;
+  // void endJob() override;
   void analyze(const edm::Event&, const edm::EventSetup&) override;
   void clearEventData();
 
 private:
+  std::vector<std::string> input_names_;
+  std::vector<std::vector<int64_t>> input_shapes_;
+  FloatArrays data_; // each stream hosts its own data
+  std::unique_ptr<ONNXRuntime> onnx_;
+
   std::string g4InfoLabel;
   std::string EBHitsCollection;
   std::string ValidationCollection;
   std::string jobId;
   int maskedEcalChannelStatusThreshold;
 
-  tensorflow::GraphDef* graphDef;
-  tensorflow::Session* session;
-  std::string graphPath;
-  std::string inputTensorName;
-  std::string outputTensorName;
+  // tensorflow::GraphDef* graphDef;
+  // tensorflow::Session* session;
+  // std::string graphPath;
+  // std::string inputTensorName;
+  // std::string outputTensorName;
 
   int cropSize;
   int maxClusters;
@@ -139,6 +148,7 @@ private:
   TTree* caloTree;
   TTree* pfTree;
   TTree* genTree;
+  TTree* mlTree;
   // TTree* btlTree;
 
   std::vector<int>      simPDG;

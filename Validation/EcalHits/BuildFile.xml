@@ -29,8 +29,6 @@
 <use name="Geometry/Records"/>
 <use name="Calibration/IsolatedParticles"/>
 <use name="PhysicsTools/TensorFlow"/>
+<use name="PhysicsTools/ONNXRuntime"/>
 <use name="eigen"/>
-<!-- <export>
-    <lib name="1" />
-</export> -->
 <flags EDM_PLUGIN="1"/>
