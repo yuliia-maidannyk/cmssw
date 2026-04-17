@@ -127,7 +127,6 @@ private:
   std::vector<float>    simE;
   std::vector<int>      simPhi;
   std::vector<int>      simEta;
-  std::vector<float>    simZ;
   std::vector<int>      simEvent;
   std::vector<int>      simSubEvent;
   std::vector<uint64_t> simTrackId;
@@ -135,12 +134,7 @@ private:
   std::vector<int>      simIPhi;
   std::vector<float>    simValues;
 
-  std::vector<float>    recoT;
-  std::vector<float>    recoE;
-  std::vector<float>    recoPhi;
-  std::vector<float>    recoEta;
   std::vector<int>      recoEvent;
-  std::vector<uint32_t> recoID;
   std::vector<int>      recoIEta;
   std::vector<int>      recoIPhi;
   std::vector<float>    recoValues;
@@ -161,21 +155,17 @@ private:
   std::vector<float>    caloValuesE;
   std::vector<uint64_t> caloTrackId;
 
-  std::vector<float> genT;
-  std::vector<float> genE;
-  std::vector<float> genPPt;
-  std::vector<float> genPPhi;
-  std::vector<float> genPEta;
-  std::vector<float> genEta;
-  std::vector<float> genPhi;
-  std::vector<int>   genPDG;
-  std::vector<int>   genEvent;
-  std::vector<float> genSourceX;
-  std::vector<float> genSourceY;
-  std::vector<float> genSourceZ;
-  std::vector<int>   genIsConverted;
-  std::vector<float> genConvR;
-  std::vector<float> genConvZ;
+  std::vector<float>    genE;
+  std::vector<float>    genPPt;
+  std::vector<float>    genPPhi;
+  std::vector<float>    genPEta;
+  std::vector<float>    genEta;
+  std::vector<float>    genPhi;
+  std::vector<uint64_t> genTrackId;
+  std::vector<int>      genEvent;
+  std::vector<int>      genIsConverted;
+  std::vector<float>    genConvR;
+  std::vector<float>    genConvZ;
 
   std::vector<int>    pfEvent;
   std::vector<int>    pfPhi;

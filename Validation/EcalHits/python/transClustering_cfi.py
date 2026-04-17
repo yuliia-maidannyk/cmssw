@@ -3,7 +3,7 @@ import FWCore.ParameterSet.Config as cms
 from DQMServices.Core.DQMEDAnalyzer import DQMEDAnalyzer
 
 transClustering = DQMEDAnalyzer("TransClustering",
-    model_path                  = cms.FileInPath("Validation/EcalHits/data/clus_tex.onnx"),
+    model_path                  = cms.string("Validation/EcalHits/data/clus_tex.onnx"),
     input_names                 = cms.vstring("inp1", "inp2", "inp3", "inp4"),
     onnxIntraOpThreads          = cms.untracked.int32(4),
     onnxInterOpThreads          = cms.untracked.int32(1),

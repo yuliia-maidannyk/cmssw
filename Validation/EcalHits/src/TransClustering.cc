@@ -64,12 +64,20 @@ TransClustering::TransClustering(const edm::ParameterSet& iConfig)
     overlapLimit(iConfig.getParameter<int>("overlapLimit")),
     seedThreshold(iConfig.getParameter<double>("seedThreshold"))
 {
-  const int onnxIntraOpThreads = iConfig.getUntrackedParameter<int>("onnxIntraOpThreads", 16);
-  const int onnxInterOpThreads = iConfig.getUntrackedParameter<int>("onnxInterOpThreads", 1);
-  auto sessOpts = ONNXRuntime::defaultSessionOptions(Backend::cpu);
-  sessOpts.SetIntraOpNumThreads(onnxIntraOpThreads);
-  sessOpts.SetInterOpNumThreads(onnxInterOpThreads);
-  onnx_ = std::make_unique<ONNXRuntime>(iConfig.getParameter<edm::FileInPath>("model_path").fullPath(), &sessOpts);
+  try {
+    auto sessOpts = ONNXRuntime::defaultSessionOptions(Backend::cuda);
+    onnx_ = std::make_unique<ONNXRuntime>(
+        iConfig.getParameter<std::string>("model_path"), &sessOpts);
+    edm::LogInfo("TransClustering") << "ONNX: using CUDA backend";
+  } catch (const std::exception& e) {
+      edm::LogWarning("TransClustering") 
+          << "CUDA failed: " << e.what() << " — falling back to CPU";
+      auto cpuOpts = ONNXRuntime::defaultSessionOptions(Backend::cpu);
+      cpuOpts.SetIntraOpNumThreads(
+          iConfig.getUntrackedParameter<int>("onnxIntraOpThreads", 4));
+      onnx_ = std::make_unique<ONNXRuntime>(
+          iConfig.getParameter<std::string>("model_path"), &cpuOpts);
+  }
 
   EBrechitCollection_Token = consumes<EBRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBrechitCollection"));
   EBHitsToken = consumes<edm::PCaloHitContainer>(edm::InputTag(std::string(g4InfoLabel), std::string(EBHitsCollection)));
@@ -193,16 +201,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
           }
       }
   }
-  // auto descendsFrom = [&](unsigned int hitTrackId, unsigned int ancestorId) -> bool {
-  //   unsigned int current = hitTrackId;
-  //   for (int depth = 0; depth < 20; ++depth) {
-  //       if (current == ancestorId) return true;
-  //       auto it = parentMap.find(current);
-  //       if (it == parentMap.end()) break;
-  //       current = it->second;
-  //   }
-  //   return false;
-  // };
 
   // Find photons from primary vertex
   std::vector<SimTrack*> photonTracks;
@@ -286,8 +284,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
     float convR = 0., convZ = 0.;
     float ieta = 0;
     float iphi = 0;
-    // float ieta_f = 0.;
-    // float iphi_f = 0.;
     if (pdgId == 22 && iPV >= 0) {
       // Match GenParticle photon to SimTrack photon by kinematic proximity
       float minDR = 0.1;  // dR matching threshold
@@ -332,78 +328,58 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
         }
       }
 
-      double tg_theta_over_2 = exp(-eta);
-      // avoid division by zero
-      if (tg_theta_over_2 == 1.0)
-          tg_theta_over_2 = 1.0 - 1e-10;
-      double tg_theta = 2. * tg_theta_over_2 / (1. - tg_theta_over_2 * tg_theta_over_2);  // tg(a+b) = tg(a)+tg(b) / (1-tg(a)*tg(b))
+      for (SimTrack* phoTk : photonTracks) {
+        if (phoTk->trackId() != bestTrackId) continue;
 
-      // calculations for EB
-      const double R = 129.;
-      double angle_x0_y0 = atan2(vy, vx);
-      double alpha = angle_x0_y0 + (M_PI - phi);
-      double sin_beta = sqrt(vx*vx + vy*vy) / R * sin(alpha);
-      double beta = abs(asin(sin_beta));
-      double gamma = M_PI / 2. - alpha - beta;
-      double length = sqrt(R*R + vx*vx + vy*vy - 2 * R * sqrt(vx*vx + vy*vy) * cos(gamma));
-      double z0_zSC = length / tg_theta;
+        // Build RawParticle
+        math::XYZTLorentzVector mom = phoTk->momentum();
+        math::XYZTLorentzVector pos(vx, vy, vz, 0.);
 
-      double tg_sctheta = tg_theta;
-      // correct values for EB
-      tg_sctheta = R / (vz + z0_zSC);
-      double sctheta = atan(tg_sctheta);
-      if (sctheta < 0) sctheta += M_PI; // ensure sctheta is in [0, pi]
-      
-      double ScEta = -log(tan(sctheta / 2.));
+        RawParticle particle(mom, pos, phoTk->charge());
 
-      ieta = static_cast<float>(ScEta) / 0.0174; // convert to crystal index (float)
-      iphi = static_cast<float>(phi); // convert to crystal index (float)
+        float strength = magField_->inTesla(GlobalPoint(vx,vy,vz)).z();
+        BaseParticlePropagator prop(particle, 0., 0., strength);
+        prop.setMagneticField(strength);
+        prop.propagateToEcalEntrance(false);
 
-      // Match gen photon SimTrack to its earliest PCaloHit in ECAL
-      // EBDetId cpEBid;
-      // float earliestTime = 1e9;
-      // bool found = false;
-
-      // for (const auto& hit : theEBCaloHits) {
-      //   if (hit.time() > 500.) continue; 
-        
-      //   if (descendsFrom((unsigned int)hit.geantTrackId(), bestTrackId)) {
-      //     if (hit.time() < earliestTime) {
-      //       earliestTime = hit.time();
-      //       cpEBid = EBDetId(hit.id());
-      //       found = true;
-      //     }
-      //   }
-      // }
-      // if (found) {
-      //   ieta = cpEBid.ieta();
-      //   iphi = cpEBid.iphi();
-      // }
+        if (prop.getSuccess() != 0) {
+            math::XYZTLorentzVector ecalPos = prop.particle().vertex();
+            double hitEta = ecalPos.eta();
+            double hitPhi = ecalPos.phi();
+            
+            ieta = static_cast<float>(hitEta) / 0.0174;
+            iphi = static_cast<float>(hitPhi);
+        } else {
+          // propagation failed, fall back
+          edm::LogWarning("TransClustering") << "Propagation to ECAL entrance failed for GenParticle with trackId " << bestTrackId << ". Storing fallback values.";
+          ieta = -999.0f; // invalid value
+          iphi = -999.0f; // invalid value
+        }
+      }
+#if INFER
       seed_isConverted.push_back(static_cast<bool>(isConverted));
       seed_ieta.push_back(ieta + 85);
-      float iphi_shifted = iphi * (180.0 / M_PI);         // (-180, +180) degrees
+      float iphi_shifted = iphi * (180.0 / M_PI);   // (-180, +180) degrees
       iphi_shifted = std::fmod(iphi + 10.0, 360.0); // apply offset, wrap to [0, 360)
       iphi_shifted = iphi + 1.0;                    // 1-based index [1, 360]
       seed_iphi.push_back(iphi_shifted);
+#endif
       if (PRINT_DEBUG) {
         std::cout << "  GenParticle momentum points to: ieta=" << ieta << " iphi=" << iphi << std::endl;
       }
-    }
-    genEvent.push_back(iEvent.id().event());
-    genPDG.push_back(pdgId);
-    genSourceX.push_back(vx);
-    genSourceY.push_back(vy);
-    genSourceZ.push_back(vz);
-    genPEta.push_back(eta);
-    genPPhi.push_back(phi);
-    genPPt.push_back(pt);
-    genEta.push_back(ieta);
-    genPhi.push_back(iphi);
-    genE.push_back(energy);
-    genIsConverted.push_back(isConverted);
-    genConvR.push_back(convR);
-    genConvZ.push_back(convZ);
-  }
+      genEvent.push_back(iEvent.id().event());
+      genTrackId.push_back(bestTrackId);
+      genPEta.push_back(eta);
+      genPPhi.push_back(phi);
+      genPPt.push_back(pt);
+      genEta.push_back(ieta);
+      genPhi.push_back(iphi);
+      genE.push_back(energy);
+      genIsConverted.push_back(isConverted);
+      genConvR.push_back(convR);
+      genConvZ.push_back(convZ);
+    } // end of primary photon loop
+  } // end of gen particle loop
   
   // **************** Loop over the CaloParticles ****************
 
@@ -484,8 +460,9 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
           caloPhi.push_back(iphi_rad);
       } else {
           // propagation failed, fall back
-          caloEta.push_back(static_cast<float>(sc->eta()) / 0.0174);
-          caloPhi.push_back(static_cast<float>(sc->phi()));
+          edm::LogWarning("TransClustering") << "Propagation to ECAL entrance failed for CaloParticle with trackId " << g4tk.trackId() << ". Storing fallback values.";
+          caloEta.push_back(-999.0f); // invalid value
+          caloPhi.push_back(-999.0f); // invalid value
       }
       sc_number++;
     }
@@ -674,19 +651,19 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
 
 #if INFER
 
-  // -------------------------------------------------------
-  // inp1: (batch, 7, 7, 20) = 1 * 7 * 7 * 20 = 980 floats
-  // inp2: (batch, 20, 2)    = 1 * 20 * 2     = 40 floats
-  // inp3: (batch, 20)       = 1 * 20         = 20 floats  
-  // inp4: (batch, 7, 7, 20) = 1 * 7 * 7 * 20 = 980 floats
-  // -------------------------------------------------------
-
   data_.clear();
   int numClusters = X.size();
   data_.emplace_back(numClusters * cropSize * cropSize * maxClusters, 0.f); // inp1
-  data_.emplace_back(numClusters * maxClusters * 2,                  0.f); // inp2
-  data_.emplace_back(numClusters * maxClusters,                      0.f); // inp3
+  data_.emplace_back(numClusters * maxClusters * 2, 0.f); // inp2
+  data_.emplace_back(numClusters * maxClusters, 0.f); // inp3
   data_.emplace_back(numClusters * cropSize * cropSize * maxClusters, 0.f); // inp4
+
+  input_shapes_ = {
+    {numClusters, cropSize, cropSize, maxClusters}, // inp1
+    {numClusters, maxClusters, 2},                  // inp2
+    {numClusters, maxClusters},                     // inp3
+    {numClusters, cropSize, cropSize, maxClusters}  // inp4
+  };
 
   if (PRINT_DEBUG) {
     std::cout << "Number of clusters to run through the model: " << numClusters << std::endl;
@@ -726,13 +703,6 @@ void TransClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& i
           if (iphi > -1) {rel_pos[n][k][1] = float(iphi - center_iphi) / float(r_eff);}
       }
   }
-
-  input_shapes_ = {
-    {numClusters, cropSize, cropSize, maxClusters}, // inp1
-    {numClusters, maxClusters, 2},                  // inp2
-    {numClusters, maxClusters},                     // inp3
-    {numClusters, cropSize, cropSize, maxClusters}  // inp4
-  };
 
   auto idx4 = [this](int n, int r, int c, int k) {
     return ((n * cropSize + r) * cropSize + c) * maxClusters + k;
@@ -848,7 +818,6 @@ void TransClustering::clearEventData() {
   simE.clear();
   simPhi.clear();
   simEta.clear();
-  simZ.clear();
   simEvent.clear();
   simSubEvent.clear();
   simTrackId.clear();
@@ -856,12 +825,7 @@ void TransClustering::clearEventData() {
   simIPhi.clear();
   simValues.clear();
 
-  recoT.clear();
-  recoE.clear();
-  recoPhi.clear();
-  recoEta.clear();
   recoEvent.clear();
-  recoID.clear();
   recoIEta.clear();
   recoIPhi.clear();
   recoValues.clear();
@@ -882,18 +846,14 @@ void TransClustering::clearEventData() {
   caloTrackId.clear();
   caloR.clear();
 
-  genT.clear();
   genE.clear();
   genPPt.clear();
   genPPhi.clear();
   genPEta.clear();
   genEta.clear();
   genPhi.clear();
-  genPDG.clear();
+  genTrackId.clear();
   genEvent.clear();
-  genSourceX.clear();
-  genSourceY.clear();
-  genSourceZ.clear();
   genIsConverted.clear();
   genConvR.clear();
   genConvZ.clear();
@@ -982,10 +942,6 @@ void TransClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::E
   simTree->Branch("mapValues",  &simValues);
 
   recoTree = fs->make<TTree>("recoTree", "A tree with reconstructed hit information");
-  recoTree->Branch("time",      &recoT);
-  recoTree->Branch("energy",    &recoE);
-  recoTree->Branch("phi",       &recoPhi);
-  recoTree->Branch("eta",       &recoEta);
   recoTree->Branch("event",     &recoEvent);
   recoTree->Branch("mapIEta",   &recoIEta);
   recoTree->Branch("mapIPhi",   &recoIPhi);
@@ -1009,17 +965,13 @@ void TransClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::E
   caloTree->Branch("trackId",   &caloTrackId);
 
   genTree = fs->make<TTree>("genTree", "A tree with gen information");
-  genTree->Branch("time",        &genT);
   genTree->Branch("energy",      &genE);
   genTree->Branch("pt",          &genPPt);
   genTree->Branch("phi",         &genPPhi);
   genTree->Branch("eta",         &genPEta);
   genTree->Branch("iphi",        &genPhi);
   genTree->Branch("ieta",        &genEta);
-  genTree->Branch("pdg",         &genPDG);
-  genTree->Branch("sourceX",     &genSourceX);
-  genTree->Branch("sourceY",     &genSourceY);
-  genTree->Branch("sourceZ",     &genSourceZ);
+  genTree->Branch("trackId",     &genTrackId);
   genTree->Branch("event",       &genEvent);
   genTree->Branch("isConverted", &genIsConverted);
   genTree->Branch("convR",       &genConvR);

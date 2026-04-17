@@ -26,7 +26,9 @@
 <use name="Geometry/Records"/>
 <use name="Calibration/IsolatedParticles"/>
 <use name="PhysicsTools/ONNXRuntime"/>
+<use name="cuda"/>
 <use name="CommonTools/BaseParticlePropagator"/>
 <use name="FastSimulation/Particle"/>
 <use name="eigen"/>
+<flags CUDA_ALLOWED="1"/>
 <flags EDM_PLUGIN="1"/>
