@@ -106,7 +106,7 @@ process.FEVTDEBUGoutput = cms.OutputModule("PoolOutputModule",
         'drop *_genMetIC5GenJs_*_*'
     ),
     SelectEvents = cms.untracked.PSet(
-        SelectEvents = cms.vstring('generation_step')
+        SelectEvents = cms.vstring('filter_step')
     ),
     dataset = cms.untracked.PSet(
         dataTier = cms.untracked.string('GEN-SIM'),
@@ -146,7 +146,7 @@ process.load("SimGeneral.HepPDTESSource.pythiapdt_cfi")
  
 process.customParticles = cms.ESSource(
     "HepPDTESSource",
-    pdtFileName = cms.FileInPath("Validation/EcalHits/data/Pi0Table.txt")
+    pdtFileName = cms.FileInPath("/feynman/scratch/dphp/ym280958//CMSSW_15_0_0/src/Validation/EcalHits/data/Pi0Table.txt")
 )
  
 process.es_prefer_custom = cms.ESPrefer("HepPDTESSource", "customParticles")
@@ -196,6 +196,15 @@ process.generator = cms.EDProducer("ManyParticleFlatRandomEGunProducer",
     psethack = cms.string('2 Xs energy 1 to 100')
 )
 
+# --- Gamma Filter addition ---
+process.gammaFilter = cms.EDFilter("PhotonGammaFilter",
+    simTrackProduct  = cms.InputTag("g4SimHits"),
+    simVertexProduct = cms.InputTag("g4SimHits"),
+    minPt            = cms.double(0.0),
+    maxEta           = cms.double(1.5),
+    motherPdgId      = cms.int32(9000001)
+)
+
 process.g4SimHits.SteppingVerbosity = 0
 
 # Ensure Geant4 uses the local physics list plugin set and add the custom constructor.
@@ -214,12 +223,13 @@ process.MessageLogger.cerr.threshold = cms.untracked.string('WARNING')
 # Path and EndPath definitions
 process.generation_step = cms.Path(process.pgen)
 process.simulation_step = cms.Path(process.psim)
+process.filter_step = cms.Path(process.gammaFilter)
 process.genfiltersummary_step = cms.EndPath(process.genFilterSummary)
 process.endjob_step = cms.EndPath(process.endOfProcess)
 process.FEVTDEBUGoutput_step = cms.EndPath(process.FEVTDEBUGoutput)
 
 # Schedule definition
-process.schedule = cms.Schedule(process.generation_step,process.genfiltersummary_step,process.simulation_step,process.endjob_step,process.FEVTDEBUGoutput_step)
+process.schedule = cms.Schedule(process.generation_step,process.genfiltersummary_step,process.simulation_step,process.filter_step,process.endjob_step,process.FEVTDEBUGoutput_step)
 from PhysicsTools.PatAlgos.tools.helpers import associatePatAlgosToolsTask
 associatePatAlgosToolsTask(process)
 
