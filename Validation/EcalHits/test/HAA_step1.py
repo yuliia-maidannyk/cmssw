@@ -17,7 +17,7 @@ print("Streams: ", args.streams)
 from Configuration.Eras.Era_Run3_2025_cff import Run3_2025
 process = cms.Process('SIM',Run3_2025)
 
-random.seed = os.urandom(10) #~10^14
+random.seed(int.from_bytes(os.urandom(10), "big")) # ~10^14
 
 # import of standard configurations
 process.load('Configuration.StandardSequences.Services_cff')
@@ -77,7 +77,7 @@ process.options = cms.untracked.PSet(
 
 # Production Info
 process.configurationMetadata = cms.untracked.PSet(
-    annotation = cms.untracked.string('Custom_Pion_2GeV_GEN-SIM nevts:'+str(args.n)),
+    annotation = cms.untracked.string('Custom_X_pair_2GeV_GEN-SIM nevts:'+str(args.n)),
     name = cms.untracked.string('Applications'),
     version = cms.untracked.string('$Revision: 1.19 $')
 )
@@ -113,7 +113,6 @@ process.FEVTDEBUGoutput = cms.OutputModule("PoolOutputModule",
         filterName = cms.untracked.string('')
     ),
     fileName = cms.untracked.string('file:step1_' + str(args.jobId) + '.root'),
-    outputCommands = process.FEVTDEBUGEventContent.outputCommands,
     splitLevel = cms.untracked.int32(0)
 )
 
@@ -152,30 +151,49 @@ process.customParticles = cms.ESSource(
  
 process.es_prefer_custom = cms.ESPrefer("HepPDTESSource", "customParticles")
  
-process.generator = cms.EDFilter("Pythia8EGun",
+# process.generator = cms.EDFilter("Pythia8EGun",
+#     PGunParameters = cms.PSet(
+#         ParticleID = cms.vint32(9000001),
+#         MinEta = cms.double(-1.479),
+#         MaxEta = cms.double(1.479),
+#         MinPhi = cms.double(-3.14159265359),
+#         MaxPhi = cms.double(3.14159265359),
+#         MinE = cms.double(1.0),
+#         MaxE = cms.double(100.0),
+#         AddAntiParticle = cms.bool(False)
+#     ),
+#     PythiaParameters = cms.PSet(
+#         parameterSets = cms.vstring("pythiaUESettings", "ProcessParameters"),
+#         pythiaUESettings = cms.vstring(
+#         ),
+#         ProcessParameters = cms.vstring(
+#             '9000001:new = X X 1 0 0 2.0 0.0 0.0 0.0 0.0',
+#             '9000001:isResonance = false',
+#             '9000001:mayDecay = false',
+#             '9000001:addChannel = 1 1.0 0 22 22'
+#         )
+#     ),
+#     Verbosity = cms.untracked.int32(0),
+#     firstRun = cms.untracked.uint32(0),
+# )
+
+process.generator = cms.EDProducer("ManyParticleFlatRandomEGunProducer",
     PGunParameters = cms.PSet(
-        ParticleID = cms.vint32(9000001),
-        MinEta = cms.double(-1.479),
-        MaxEta = cms.double(1.479),
-        MinPhi = cms.double(-3.14159265359),
-        MaxPhi = cms.double(3.14159265359),
-        MinE = cms.double(1.0),
-        MaxE = cms.double(100.0),
-        AddAntiParticle = cms.bool(False)
+        PartID = cms.vint32(9000001,9000001),
+        MinEta = cms.vdouble(-1.479,0),
+        MaxEta = cms.vdouble(0,1.479),
+        MinPhi = cms.vdouble(-3.14159265359,-3.14159265359),
+        MaxPhi = cms.vdouble(3.14159265359,3.14159265359),
+        # For X with m=2 GeV, require E >= m to avoid invalid kinematics.
+        MinE = cms.vdouble(2.1,2.1),
+        MaxE = cms.vdouble(100.0,100.0),
+        Mass = cms.vdouble(2.0, 2.0)
     ),
-    PythiaParameters = cms.PSet(
-        parameterSets = cms.vstring("pythiaUESettings", "ProcessParameters"),
-        pythiaUESettings = cms.vstring(
-        ),
-        ProcessParameters = cms.vstring(
-            '9000001:new = X X 1 0 0 2.0 0.0 0.0 0.0 0.0',
-            '9000001:isResonance = false',
-            '9000001:mayDecay = false',
-            '9000001:addChannel = 1 1.0 0 22 22'
-        )
-    ),
-    Verbosity = cms.untracked.int32(0),
+    AddAntiParticle = cms.bool(False),
+    Verbosity = cms.untracked.int32(100),
     firstRun = cms.untracked.uint32(0),
+    BackToBack = cms.bool(True),
+    psethack = cms.string('2 Xs energy 1 to 100')
 )
 
 process.g4SimHits.SteppingVerbosity = 0
@@ -188,7 +206,7 @@ process.g4SimHits.Physics.Pi0MassModifier = cms.PSet(
 )
 
 # process.MessageLogger.debugModules = cms.untracked.vstring("*")
-process.MessageLogger.cerr.threshold = cms.untracked.string('INFO')
+process.MessageLogger.cerr.threshold = cms.untracked.string('WARNING')
 # process.MessageLogger.cerr.INFO = cms.untracked.PSet(
 #     limit = cms.untracked.int32(-1)
 # )
