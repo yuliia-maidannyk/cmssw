@@ -1,9 +1,5 @@
 import FWCore.ParameterSet.Config as cms
 
-
-#from RecoParticleFlow.PFClusterProducer.towerMakerPF_cfi import *
-#from RecoParticleFlow.PFClusterProducer.particleFlowCaloResolution_cfi import _timeResolutionHCALMaxSample
-
 from RecoParticleFlow.PFClusterProducer.particleFlowRecHitECAL_cfi import *
 from RecoParticleFlow.PFClusterProducer.particleFlowRecHitHBHE_cfi import *
 from RecoParticleFlow.PFClusterProducer.particleFlowRecHitHF_cfi import *
@@ -11,7 +7,7 @@ from RecoParticleFlow.PFClusterProducer.particleFlowRecHitHO_cfi import *
 from RecoParticleFlow.PFClusterProducer.particleFlowRecHitPS_cfi import *
 
 from RecoParticleFlow.PFClusterProducer.particleFlowClusterECALUncorrected_cfi import *
-from RecoParticleFlow.PFClusterProducer.particleFlowClusterECAL_cff import *
+#from RecoParticleFlow.PFClusterProducer.particleFlowClusterECAL_cff import *
 
 from RecoParticleFlow.PFClusterProducer.particleFlowClusterHBHE_cfi import *
 from RecoParticleFlow.PFClusterProducer.particleFlowClusterHF_cfi import *
@@ -19,13 +15,51 @@ from RecoParticleFlow.PFClusterProducer.particleFlowClusterHCAL_cfi import *
 from RecoParticleFlow.PFClusterProducer.particleFlowClusterHO_cfi import *
 from RecoParticleFlow.PFClusterProducer.particleFlowClusterPS_cfi import *
 from RecoParticleFlow.PFClusterProducer.particleFlowBadHcalPseudoCluster_cff import *
+from RecoParticleFlow.PFClusterProducer.MLPFClusterProducer_cfi import mlPFClusterProducer
+from RecoParticleFlow.PFClusterProducer.particleFlowClusterECAL_cfi import particleFlowClusterECAL as _standardECAL
+
+# Run CorrectedECALPFClusterProducer to get EE clusters + EEtoPSAssociation
+particleFlowClusterECALForEE = cms.EDProducer("CorrectedECALPFClusterProducer",
+    inputECAL       = cms.InputTag("particleFlowClusterECALUncorrected"),
+    inputPS         = cms.InputTag("particleFlowClusterPS"),
+    minimumPSEnergy = cms.double(0.0),
+    skipPS          = cms.bool(False),
+    energyCorrector = cms.PSet(
+        applyCrackCorrections  = cms.bool(False),
+        applyMVACorrections    = cms.bool(False),
+        srfAwareCorrection     = cms.bool(False),
+        setEnergyUncertainty   = cms.bool(False),
+        autoDetectBunchSpacing = cms.bool(True),
+        bunchSpacing           = cms.int32(25),
+        maxPtForMVAEvaluation  = cms.double(-99.),
+        recHitsEBLabel         = cms.InputTag("ecalRecHit", "EcalRecHitsEB"),
+        recHitsEELabel         = cms.InputTag("ecalRecHit", "EcalRecHitsEE"),
+        ebSrFlagLabel          = cms.InputTag("ecalDigis"),
+        eeSrFlagLabel          = cms.InputTag("ecalDigis"),
+    )
+)
+
+# Standard clusters still available for comparison
+particleFlowClusterECALStandard = _standardECAL.clone()
+
+# Single producer IS particleFlowClusterECAL:
+# - runs ML inference for EB
+# - appends EE clusters (kinematics only, no PFRecHitFractions) from ForEE
+# - forwards EEtoPSAssociation from ForEE
+particleFlowClusterECAL = mlPFClusterProducer.clone(
+    inputEE          = cms.InputTag("particleFlowClusterECALForEE"),
+    inputEEtoPSAssoc = cms.InputTag("particleFlowClusterECALForEE"),
+)
 
 particleFlowClusterECALTask = cms.Task(particleFlowClusterECAL)
 particleFlowClusterECALSequence = cms.Sequence(particleFlowClusterECALTask)
 
-pfClusteringECALTask = cms.Task(particleFlowRecHitECAL,
-                                particleFlowClusterECALUncorrected,
-                                particleFlowClusterECALTask)
+pfClusteringECALTask = cms.Task(
+    particleFlowRecHitECAL,
+    particleFlowClusterECALUncorrected,
+    particleFlowClusterECALForEE,
+    particleFlowClusterECALTask,
+)
 pfClusteringECAL = cms.Sequence(pfClusteringECALTask)
 
 pfClusteringPSTask = cms.Task(particleFlowRecHitPS,particleFlowClusterPS)
@@ -77,17 +111,17 @@ phase2_hgcal.toReplaceWith( particleFlowClusterTask, _phase2_hgcal_particleFlowC
 
 #timing
 
-from RecoParticleFlow.PFClusterProducer.particleFlowClusterTimeAssigner_cfi import particleFlowTimeAssignerECAL
-from RecoParticleFlow.PFSimProducer.ecalBarrelClusterFastTimer_cfi import ecalBarrelClusterFastTimer
-_phase2_timing_particleFlowClusterECALTask = particleFlowClusterECALTask.copy()
-_phase2_timing_particleFlowClusterECALTask.add(cms.Task(ecalBarrelClusterFastTimer,
-                                                        particleFlowTimeAssignerECAL))
+# from RecoParticleFlow.PFClusterProducer.particleFlowClusterTimeAssigner_cfi import particleFlowTimeAssignerECAL
+# from RecoParticleFlow.PFSimProducer.ecalBarrelClusterFastTimer_cfi import ecalBarrelClusterFastTimer
+# _phase2_timing_particleFlowClusterECALTask = particleFlowClusterECALTask.copy()
+# _phase2_timing_particleFlowClusterECALTask.add(cms.Task(ecalBarrelClusterFastTimer,
+#                                                         particleFlowTimeAssignerECAL))
 
-from Configuration.Eras.Modifier_phase2_timing_cff import phase2_timing
-phase2_timing.toReplaceWith(particleFlowClusterECALTask,
-                                  _phase2_timing_particleFlowClusterECALTask)
-phase2_timing.toModify(particleFlowClusterECAL,
-                            inputECAL = 'particleFlowTimeAssignerECAL')
+# from Configuration.Eras.Modifier_phase2_timing_cff import phase2_timing
+# phase2_timing.toReplaceWith(particleFlowClusterECALTask,
+#                                   _phase2_timing_particleFlowClusterECALTask)
+# phase2_timing.toModify(particleFlowClusterECAL,
+#                             inputECAL = 'particleFlowTimeAssignerECAL')
 
 # Replace HBHE rechit and clustering with Alpaka modules
 
