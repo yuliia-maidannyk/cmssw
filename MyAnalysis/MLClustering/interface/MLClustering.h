@@ -121,6 +121,22 @@ private:
   TTree* pfTree;
   TTree* genTree;
   TTree* mlTree;
+  TTree* decayTTree;
+  TTree* simTkTree;
+
+  std::vector<int>      simTkEvent;
+  std::vector<unsigned> simTkTrackId;
+  std::vector<int>      simTkPDG;
+  std::vector<float>    simTkE;
+  std::vector<float>    simTkEta;      // momentum eta
+  std::vector<float>    simTkPhi;      // momentum phi
+  std::vector<float>    simTkIEta;     // propagated ECAL ieta (-999 if failed/endcap)
+  std::vector<float>    simTkIPhi;     // propagated ECAL iphi (-999 if failed/endcap)
+  std::vector<float>    simTkConvR;    // production vertex R
+  std::vector<int>      simTkParentId; // parent trackId (-1 if primary)
+  std::vector<unsigned> simTkAncestorId; // gen-level ancestor trackId
+  std::vector<int>      simTkGenIdx;   // genpartIndex() — index into GenParticle collection
+  std::vector<float>    simTkEBEnergy; // EB deposited energy (0 if no hits)
 
   std::vector<int>      simPDG;
   std::vector<float>    simT;
@@ -154,6 +170,13 @@ private:
   std::vector<int>      caloValues;
   std::vector<float>    caloValuesE;
   std::vector<uint64_t> caloTrackId;
+  std::vector<uint64_t> caloParentTrackId;
+  std::vector<uint64_t> caloAncestorTrackId;
+  std::vector<float>    caloEBEnergy;
+  std::vector<float>    caloCentroidIEta;
+  std::vector<float>    caloCentroidIPhi;
+  std::vector<uint64_t> caloScaleId; // trackId for which we store the scale factor
+  std::vector<float>    caloScaleFactor; 
 
   std::vector<float>    genE;
   std::vector<float>    genPPt;
@@ -179,6 +202,20 @@ private:
   std::vector<float> mlCenterY;
   std::vector<float> mlEnergy;
   std::vector<float> mlSeed;
+
+  std::vector<int>   decayTrackId;
+  std::vector<int>   decayPDG;
+  std::vector<int>   decayParentId;
+  std::vector<int>   decayGenIdx;
+  std::vector<float> decayPPhi;
+  std::vector<float> decayPEta;
+  std::vector<float> decayE;
+  std::vector<float> decaySourceX;
+  std::vector<float> decaySourceY;
+  std::vector<float> decaySourceZ;
+  std::vector<int>   decayEvent;
+  std::vector<int>   decayOffset;
+  std::vector<int>   decayList;
 
   std::map<unsigned, unsigned> geantToIndex_;
 };
