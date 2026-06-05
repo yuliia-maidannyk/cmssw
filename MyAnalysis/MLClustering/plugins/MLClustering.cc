@@ -285,6 +285,10 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     float convR = 0., convZ = 0.;
     float ieta = 0;
     float iphi = 0;
+    float ieta_f = 0.;
+    float iphi_f = 0.;
+    float ieta_2f = 0.;
+    float iphi_2f = 0.;
     if (pdgId == 22 && iPV >= 0) {
       // Match GenParticle photon to SimTrack photon by kinematic proximity
       float minDR = 0.1;  // dR matching threshold
@@ -347,14 +351,27 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
             math::XYZTLorentzVector ecalPos = prop.particle().vertex();
             double hitEta = ecalPos.eta();
             double hitPhi = ecalPos.phi();
-            
-            ieta = static_cast<float>(hitEta) / 0.0174;
-            iphi = static_cast<float>(hitPhi);
+            GlobalPoint gp(ecalPos.x(), ecalPos.y(), ecalPos.z());
+            DetId closestCell = barrelGeom_->getClosestCell(gp);
+            EBDetId ebid(closestCell);
+
+            ieta = static_cast<float>(ebid.ieta());
+            iphi = static_cast<float>(ebid.iphi());
+
+            std::pair<float, float> fractional = barrelGeom_->getClosestCellFractional(gp);
+            ieta_f = fractional.first;
+            iphi_f = fractional.second;
+
+            auto cell = barrelGeom_->getGeometry(ebid);
+            float dEta = hitEta - cell->etaPos();
+            float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
+            ieta_2f = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
+            iphi_2f = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
         } else {
           // propagation failed, fall back
           edm::LogWarning("MLClustering") << "Propagation to ECAL entrance failed for GenParticle with trackId " << bestTrackId << ". Storing fallback values.";
-          ieta = -999.0f; // invalid value
-          iphi = -999.0f; // invalid value
+          ieta_2f = -999.0f; // invalid value
+          iphi_2f = -999.0f; // invalid value
         }
       }
 #if INFER
@@ -375,6 +392,10 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
       genPPt.push_back(pt);
       genEta.push_back(ieta);
       genPhi.push_back(iphi);
+      genEtaF.push_back(ieta_f);
+      genPhiF.push_back(iphi_f);
+      genEta2F.push_back(ieta_2f);
+      genPhi2F.push_back(iphi_2f);
       genE.push_back(energy);
       genIsConverted.push_back(isConverted);
       genConvR.push_back(convR);
@@ -388,7 +409,6 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     int      parentTrackId;   // -1 if primary
     std::vector<int> daughterTrackIds;
     float    pt, eta, phi, energy;
-    float    vx, vy, vz;      // production vertex
     int      genPartIdx;       // >=0 if linked to GenParticle
   };
 
@@ -413,10 +433,6 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     int vtxIdx = tk.vertIndex();
     if (vtxIdx >= 0 && vtxIdx < (int)simVertexes->size()) {
       const SimVertex& vtx = (*simVertexes)[vtxIdx];
-      node.vx = vtx.position().x();
-      node.vy = vtx.position().y();
-      node.vz = vtx.position().z();
-
       // The vertex's parent is THIS track's parent
       int parentTkId = vtx.parentIndex();  // this is a trackId, not a vector index
       node.parentTrackId = parentTkId;
@@ -432,29 +448,6 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
         it->second.daughterTrackIds.push_back(tkId);
       }
     }
-  }
-
-  decayOffset.push_back(0);
-
-  for (auto& [tkId, node] : decayTree) {
-    decayEvent.push_back(iEvent.id().event());
-    decayTrackId.push_back(node.trackId);
-    decayPDG.push_back(node.pdgId);
-    decayParentId.push_back(node.parentTrackId);
-    decayGenIdx.push_back(node.genPartIdx);
-    decayPt.push_back(node.pt);
-    decayPEta.push_back(node.eta);
-    decayPPhi.push_back(node.phi);
-    decayE.push_back(node.energy);
-    decaySourceX.push_back(node.vx);
-    decaySourceY.push_back(node.vy);
-    decaySourceZ.push_back(node.vz);
-
-    // Append daughters to flat list, then record new offset: this is to deconstruct the info later
-    for (int dauId : node.daughterTrackIds) {
-      decayList.push_back(dauId);
-    }
-    decayOffset.push_back(decayList.size());
   }
 
   // **************** Loop over the CaloParticles ****************
@@ -488,7 +481,6 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
 
       const auto& g4tk = *(sc->g4Track_begin());
       int tkId = g4tk.trackId();
-      
       caloTrackId.push_back(tkId);
 
       float ebEnergy = 0.f;
@@ -541,7 +533,6 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
           if (decayTree[current].genPartIdx >= 0)
             ancestorId = current;
         }
-        
         caloParentTrackId.push_back(node.parentTrackId);
         caloAncestorTrackId.push_back(ancestorId);
       }
@@ -572,14 +563,31 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
           math::XYZTLorentzVector ecalPos = prop.particle().vertex();
           double hitEta = ecalPos.eta();
           double hitPhi = ecalPos.phi();
-          
+
           // Only store if propagated into barrel eta range
           if (std::abs(hitEta) < 1.479) {
-            float ieta = static_cast<float>(hitEta) / 0.0174;
-            float iphi_rad = static_cast<float>(hitPhi);
             
-            caloEta.push_back(ieta);
-            caloPhi.push_back(iphi_rad);
+            GlobalPoint gp(ecalPos.x(), ecalPos.y(), ecalPos.z());
+            DetId closestCell = barrelGeom_->getClosestCell(gp);
+            EBDetId ebid(closestCell);
+            // std::pair<float, float> fractional = barrelGeom_->getClosestCellFractional(gp);
+
+            // caloEta.push_back(fractional.first);
+            // caloPhi.push_back(fractional.second);
+
+            int ieta = ebid.ieta();
+            int iphi = ebid.iphi();
+
+            auto cell = barrelGeom_->getGeometry(ebid);
+
+            float dEta = hitEta - cell->etaPos();
+            float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
+            float ieta_2f = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
+            float iphi_2f = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
+
+            caloEta.push_back(ieta_2f);
+            caloPhi.push_back(iphi_2f);
+
           } else {
               // endcap
               caloEta.push_back(-999.0f); // invalid value
@@ -610,16 +618,12 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
 
   // **************** Loop over the EB SIM hits ****************
 
-  std::map<unsigned int, std::vector<PCaloHit *>, std::less<unsigned int>> CaloHitMap;
   MapType simMap;
-  double EBEnergy_ = 0.;
 
   for (std::vector<PCaloHit>::iterator isim = theEBCaloHits.begin(); isim != theEBCaloHits.end(); ++isim) {
     if (isim->time() > 500.) {
       continue;
     }
-
-    CaloHitMap[isim->id()].push_back(&(*isim));
 
     EBDetId ebid(isim->id());
 
@@ -638,10 +642,7 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     simEta.push_back(ieta);
     simPhi.push_back(iphi);
     simEvent.push_back(iEvent.id().event());
-
-    EBEnergy_ += isim->energy();
   }
-  // std::cout << "Total EB sim energy: " << EBEnergy_ << std::endl;
 
   for (const auto& [key, val] : simMap) {
     simIEta.push_back(key.first);
@@ -742,16 +743,36 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
           math::XYZTLorentzVector ecalPos = prop.particle().vertex();
           double hitEta = ecalPos.eta();
           double hitPhi = ecalPos.phi();
+
           if (std::abs(hitEta) < 1.479) {
-              simTkIEta.push_back(static_cast<float>(hitEta) / 0.0174f);
-              simTkIPhi.push_back(static_cast<float>(hitPhi));
+            GlobalPoint gp(ecalPos.x(), ecalPos.y(), ecalPos.z());
+            DetId closestCell = barrelGeom_->getClosestCell(gp);
+            EBDetId ebid(closestCell);
+
+            auto cell = barrelGeom_->getGeometry(ebid);
+
+            int ieta = ebid.ieta();
+            int iphi = ebid.iphi();
+
+            float dEta = hitEta - cell->etaPos();
+            float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
+            float ieta_2f = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
+            float iphi_2f = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
+
+            simTkIEta.push_back(ieta_2f);
+            simTkIPhi.push_back(iphi_2f);
+
+            // std::pair<float, float> fractional = barrelGeom_->getClosestCellFractional(gp);
+            // simTkIEta.push_back(fractional.first);
+            // simTkIPhi.push_back(fractional.second);
+
           } else {
-              simTkIEta.push_back(-999.f);
-              simTkIPhi.push_back(-999.f);
+            simTkIEta.push_back(-999.f);
+            simTkIPhi.push_back(-999.f);
           }
       } else {
-          simTkIEta.push_back(-999.f);
-          simTkIPhi.push_back(-999.f);
+        simTkIEta.push_back(-999.f);
+        simTkIPhi.push_back(-999.f);
       }
   }
 
@@ -842,41 +863,128 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
   }
 #endif
 
+  // ************** Fine-calo: EB PCaloHits grouped by boundary-crossing track **************
+  // trackId -> SimTrack* lookup (boundary vars live on the full SimTrackContainer)
+  std::map<unsigned, const SimTrack*> tkById;
+  for (const auto& tk : *simTracks) tkById[tk.trackId()] = &tk;
+
+  // Accumulate EB deposits per fine track id (== boundary-crossing parent)
+  struct FineAcc { float e=0.f, eEM=0.f, eHad=0.f; int n=0; };
+  std::map<int, FineAcc> fineAcc;
+  for (const auto& hit : theEBCaloHits) {
+    if (hit.time() > 500.) continue;
+    FineAcc& a = fineAcc[hit.geantTrackId()];
+    a.e    += hit.energy();
+    a.eEM  += hit.energyEM();
+    a.eHad += hit.energyHad();
+    a.n    += 1;
+  }
+
+  for (const auto& [tkId, acc] : fineAcc) {
+    fineEvent.push_back(iEvent.id().event());
+    fineTrackId.push_back(tkId);
+    fineNHits.push_back(acc.n);
+    fineEBEnergy.push_back(acc.e);
+
+    const SimTrack* tk = tkById.count((unsigned)tkId) ? tkById[(unsigned)tkId] : nullptr;
+    finePDG.push_back(tk ? tk->type() : 0);
+    fineInitialE.push_back(tk ? (float)tk->momentum().e() : -999.f);
+    fineInitialEta.push_back(tk ? (float)tk->momentum().eta() : -999.f);
+    fineInitialPhi.push_back(tk ? (float)tk->momentum().phi() : -999.f);
+    fineGenIdx.push_back(tk ? tk->genpartIndex() : -1);
+
+    // ECAL entrance straight from the Geant4 boundary crossing
+    float entIEta=-999.f, entIPhi=-999.f, entE=-999.f, entX=-999.f, entY=-999.f, entZ=-999.f;
+    int crossed = 0;
+
+    if (tk && tk->crossedBoundary()) {
+      crossed = 1;
+      const auto& pB = tk->getPositionAtBoundary();   // global, cm
+      const auto& mB = tk->getMomentumAtBoundary();
+      entX = pB.x(); entY = pB.y(); entZ = pB.z(); entE = mB.e();
+
+      float hitEta = pB.eta();
+      float hitPhi = pB.phi();
+
+      if (std::abs(hitEta) < 1.479) {
+        GlobalPoint gp(pB.x(), pB.y(), pB.z());
+        EBDetId ebid(barrelGeom_->getClosestCell(gp));
+        int ieta = ebid.ieta();
+        int iphi = ebid.iphi();
+        auto cell = barrelGeom_->getGeometry(ebid);
+        float dEta = hitEta - cell->etaPos();
+        float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
+        entIEta = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
+        entIPhi = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
+      }
+    }
+    fineCrossedBoundary.push_back(crossed);
+    fineEntIEta.push_back(entIEta);
+    fineEntIPhi.push_back(entIPhi);
+    fineEntE.push_back(entE);
+    fineEntX.push_back(entX);
+    fineEntY.push_back(entY);
+    fineEntZ.push_back(entZ);
+
+    // Parent + gen-level ancestor (reuse decayTree built earlier in analyze)
+    int parentId = -1, ancestorId = tkId, current = tkId;
+    auto it = decayTree.find(tkId);
+    if (it != decayTree.end()) {
+      parentId = it->second.parentTrackId;
+      while (decayTree.count(current) && decayTree[current].parentTrackId >= 0) {
+        current = decayTree[current].parentTrackId;
+        if (decayTree.count(current) && decayTree[current].genPartIdx >= 0) ancestorId = current;
+      }
+    }
+    fineParentId.push_back(parentId);
+    fineAncestorId.push_back(ancestorId);
+  }
+
   // **************** Loop over the PFClusters ****************
 
   for (const auto& pf : *pfClusters)
   {
-    //DetId ebid = pf.seed();
-    //EBDetId ebdetid(ebid);
     pfEvent.push_back(iEvent.id().event());
-    float corr_E = static_cast<float>(pf.correctedEnergy());
+    //float corr_E = static_cast<float>(pf.correctedEnergy());
+    float corr_E = static_cast<float>(pf.energy());
     pfE.push_back(corr_E);
 
-    GlobalPoint gp(pf.position().x(), pf.position().y(), pf.position().z());
+    math::XYZPoint pfPos = pf.position();
+    GlobalPoint gp(pfPos.x(), pfPos.y(), pfPos.z());
     DetId closestCell = barrelGeom_->getClosestCell(gp);
     EBDetId ebid(closestCell);
     int ieta = ebid.ieta();
     int iphi = ebid.iphi();
 
-    // double exact_eta = gp.eta();
-    // double exact_phi = gp.phi().value();
-    
-    // Get crystal center position
-    // GlobalPoint cellCenter = barrelGeom_->getGeometry(closestCell)->getPosition();
+    float hitEta = pf.positionREP().Eta();
+    float hitPhi = pf.positionREP().Phi();
 
-    // // Calculate fractional offset from crystal center
-    // double deltaEta = exact_eta - cellCenter.eta();
-    // double deltaPhi = exact_phi - cellCenter.phi().value();
-    
-    // // Wrap deltaPhi to [-π, π]
-    // while (deltaPhi > M_PI) deltaPhi -= 2*M_PI;
-    // while (deltaPhi < -M_PI) deltaPhi += 2*M_PI;
+    const CaloCellGeometry* cell = barrelGeom_->getGeometry(ebid);
+    //std::cout << *cell << std::endl;
 
-    // double ieta_fractional = ieta + deltaEta / 0.0174;
-    // double iphi_fractional = iphi + deltaPhi / (2.0 * M_PI / 360.0);
+    // fractional position within crystal: -1 (low edge) to +1 (high edge)
+    // float localEta = (hitEta - cell->etaPos()) / (cell->etaSpan() / 2.f);
+    // float localPhi = (hitPhi - cell->phiPos());
+    // while (localPhi >  M_PI) localPhi -= 2*M_PI;
+    // while (localPhi < -M_PI) localPhi += 2*M_PI;
+    // localPhi = localPhi / (cell->phiSpan() / 2.f);
 
-    pfEta.push_back(ieta);
-    pfPhi.push_back(iphi);
+    // float ieta_2f = ieta + 0.5f * (localEta + 1.0f); // [ieta, ieta+1] crystal center @ 0.5
+    // float iphi_2f = iphi + 0.5f * (localPhi + 1.0f); // [iphi, iphi+1] crystal center @ 0.5
+
+    float dEta = hitEta - cell->etaPos();
+    float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
+    float ieta_f = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
+    float iphi_f = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
+
+    // std::pair<float, float> fractional = barrelGeom_->getClosestCellFractional(gp);
+    // float ieta_f = fractional.first;
+    // float iphi_f = fractional.second;
+
+    pfEta.push_back(ieta_f);
+    pfPhi.push_back(iphi_f);
+    pfX.push_back(ieta_f);
+    pfY.push_back(iphi_f);
 
     if (PRINT_DEBUG) {std::cout << " PFCluster E=" << corr_E << " at (" << ieta << ", " << iphi << ")" << std::endl;}
   }
@@ -1042,27 +1150,16 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
   caloTree->Fill();
   genTree->Fill();
   pfTree->Fill();
-  decayTTree->Fill();
   simTkTree->Fill();
+  fineTree->Fill();
 } // --- end of analyze
 
 void MLClustering::clearEventData() {
-  simPDG.clear();
-  simT.clear();
-  simE.clear();
-  simPhi.clear();
-  simEta.clear();
-  simEvent.clear();
-  simSubEvent.clear();
-  simTrackId.clear();
-  simIEta.clear();
-  simIPhi.clear();
-  simValues.clear();
+  simPDG.clear(); simT.clear(); simE.clear(); simPhi.clear(); simEta.clear();
+  simEvent.clear(); simSubEvent.clear(); simTrackId.clear(); simIEta.clear();
+  simIPhi.clear(); simValues.clear();
 
-  recoEvent.clear();
-  recoIEta.clear();
-  recoIPhi.clear();
-  recoValues.clear();
+  recoEvent.clear(); recoIEta.clear(); recoIPhi.clear(); recoValues.clear();
 
   caloE.clear();
   caloPPt.clear();
@@ -1087,50 +1184,24 @@ void MLClustering::clearEventData() {
   caloScaleId.clear();
   caloScaleFactor.clear();
 
-  genE.clear();
-  genPPt.clear();
-  genPPhi.clear();
-  genPEta.clear();
-  genEta.clear();
-  genPhi.clear();
-  genTrackId.clear();
-  genEvent.clear();
-  genIsConverted.clear();
-  genConvR.clear();
-  genConvZ.clear();
+  genE.clear(); genPPt.clear(); genPPhi.clear(); genPEta.clear(); genEta.clear();
+  genPhi.clear(); genEtaF.clear(); genPhiF.clear(); genEta2F.clear(); genPhi2F.clear();
+  genTrackId.clear(); genEvent.clear(); genIsConverted.clear(); genConvR.clear(); genConvZ.clear();
 
-  pfEvent.clear();
-  pfPhi.clear();
-  pfEta.clear();
-  pfE.clear();
+  pfEvent.clear(); pfPhi.clear(); pfEta.clear(); 
+  pfE.clear(); pfX.clear(); pfY.clear(); pfZ.clear();
 
-  decayEvent.clear();
-  decayTrackId.clear();
-  decayPDG.clear();
-  decayParentId.clear();
-  decayGenIdx.clear();
-  decayPEta.clear();
-  decayPPhi.clear();
-  decayE.clear();
-  decaySourceX.clear();
-  decaySourceY.clear();
-  decaySourceZ.clear();
-  decayList.clear();
-  decayOffset.clear();
+  simTkEvent.clear(); simTkTrackId.clear(); simTkPDG.clear(); simTkE.clear(); simTkEta.clear();
+  simTkPhi.clear(); simTkIEta.clear(); simTkIPhi.clear(); simTkConvR.clear();
+  simTkParentId.clear(); simTkAncestorId.clear(); simTkGenIdx.clear(); simTkEBEnergy.clear();
 
-  simTkEvent.clear();
-  simTkTrackId.clear();
-  simTkPDG.clear();
-  simTkE.clear();
-  simTkEta.clear();
-  simTkPhi.clear();
-  simTkIEta.clear();
-  simTkIPhi.clear();
-  simTkConvR.clear();
-  simTkParentId.clear();
-  simTkAncestorId.clear();
-  simTkGenIdx.clear();
-  simTkEBEnergy.clear();
+  fineEvent.clear(); fineTrackId.clear(); finePDG.clear(); fineNHits.clear();
+  fineEBEnergy.clear();
+  fineInitialE.clear(); fineInitialEta.clear(); fineInitialPhi.clear();
+  fineCrossedBoundary.clear();
+  fineEntIEta.clear(); fineEntIPhi.clear(); fineEntE.clear();
+  fineEntX.clear(); fineEntY.clear(); fineEntZ.clear();
+  fineParentId.clear(); fineAncestorId.clear(); fineGenIdx.clear();
 
 #if INFER
   mlEvent.clear();
@@ -1247,6 +1318,10 @@ void MLClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::Even
   genTree->Branch("eta",         &genPEta);
   genTree->Branch("iphi",        &genPhi);
   genTree->Branch("ieta",        &genEta);
+  genTree->Branch("iphiF",       &genPhiF);
+  genTree->Branch("ietaF",       &genEtaF);
+  genTree->Branch("iphi2F",      &genPhi2F);
+  genTree->Branch("ieta2F",      &genEta2F);
   genTree->Branch("trackId",     &genTrackId);
   genTree->Branch("event",       &genEvent);
   genTree->Branch("isConverted", &genIsConverted);
@@ -1258,21 +1333,9 @@ void MLClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::Even
   pfTree->Branch("eta",    &pfEta);
   pfTree->Branch("phi",    &pfPhi);
   pfTree->Branch("event",  &pfEvent);
-
-  decayTTree = fs->make<TTree>("decayTree", "A tree with decay information");
-  decayTTree->Branch("event",     &decayEvent);
-  decayTTree->Branch("trackId",   &decayTrackId);
-  decayTTree->Branch("pdg",       &decayPDG);
-  decayTTree->Branch("parentId",  &decayParentId);
-  decayTTree->Branch("genIdx",    &decayGenIdx);
-  decayTTree->Branch("eta",       &decayPEta);
-  decayTTree->Branch("phi",       &decayPPhi);
-  decayTTree->Branch("energy",    &decayE);
-  decayTTree->Branch("sourceX",   &decaySourceX);
-  decayTTree->Branch("sourceY",   &decaySourceY);
-  decayTTree->Branch("sourceZ",   &decaySourceZ);
-  decayTTree->Branch("daughterList", &decayList);
-  decayTTree->Branch("daughterOffset", &decayOffset);
+  pfTree->Branch("x",      &pfX);
+  pfTree->Branch("y",      &pfY);
+  pfTree->Branch("z",      &pfZ);
 
   simTkTree = fs->make<TTree>("simTkTree", "One row per SimTrack");
   simTkTree->Branch("event",      &simTkEvent);
@@ -1288,6 +1351,26 @@ void MLClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::Even
   simTkTree->Branch("ancestorId", &simTkAncestorId);
   simTkTree->Branch("genIdx",     &simTkGenIdx);
   simTkTree->Branch("ebEnergy",   &simTkEBEnergy);
+
+  fineTree = fs->make<TTree>("fineTree", "One row per fine-calo track depositing in EB");
+  fineTree->Branch("event",           &fineEvent);
+  fineTree->Branch("trackId",         &fineTrackId);
+  fineTree->Branch("pdg",             &finePDG);
+  fineTree->Branch("nHits",           &fineNHits);
+  fineTree->Branch("ebEnergy",        &fineEBEnergy);
+  fineTree->Branch("initialE",        &fineInitialE);
+  fineTree->Branch("initialEta",      &fineInitialEta);
+  fineTree->Branch("initialPhi",      &fineInitialPhi);
+  fineTree->Branch("crossedBoundary", &fineCrossedBoundary);
+  fineTree->Branch("entranceIEta",    &fineEntIEta);
+  fineTree->Branch("entranceIPhi",    &fineEntIPhi);
+  fineTree->Branch("entranceE",       &fineEntE);
+  fineTree->Branch("entranceX",       &fineEntX);
+  fineTree->Branch("entranceY",       &fineEntY);
+  fineTree->Branch("entranceZ",       &fineEntZ);
+  fineTree->Branch("parentId",        &fineParentId);
+  fineTree->Branch("ancestorId",      &fineAncestorId);
+  fineTree->Branch("genIdx",          &fineGenIdx);
 
 #if INFER
   mlTree = fs->make<TTree>("mlTree", "ML inference output");
