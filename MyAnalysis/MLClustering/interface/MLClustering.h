@@ -117,25 +117,11 @@ private:
 
   TTree* simTree;
   TTree* recoTree;
-  TTree* caloTree;
   TTree* pfTree;
   TTree* genTree;
   TTree* mlTree;
-  TTree* simTkTree;
-
-  std::vector<int>      simTkEvent;
-  std::vector<unsigned> simTkTrackId;
-  std::vector<int>      simTkPDG;
-  std::vector<float>    simTkE;
-  std::vector<float>    simTkEta;      // momentum eta
-  std::vector<float>    simTkPhi;      // momentum phi
-  std::vector<float>    simTkIEta;     // propagated ECAL ieta (-999 if failed/endcap)
-  std::vector<float>    simTkIPhi;     // propagated ECAL iphi (-999 if failed/endcap)
-  std::vector<float>    simTkConvR;    // production vertex R
-  std::vector<int>      simTkParentId; // parent trackId (-1 if primary)
-  std::vector<unsigned> simTkAncestorId; // gen-level ancestor trackId
-  std::vector<int>      simTkGenIdx;   // genpartIndex() — index into GenParticle collection
-  std::vector<float>    simTkEBEnergy; // EB deposited energy (0 if no hits)
+  TTree* fineTree;
+  TTree* fineMapTree;
 
   std::vector<int>      simPDG;
   std::vector<float>    simT;
@@ -147,46 +133,24 @@ private:
   std::vector<uint64_t> simTrackId;
   std::vector<int>      simIEta;
   std::vector<int>      simIPhi;
+  std::vector<float>    simMapFraction;
+  std::vector<uint64_t> simMapTrackId;
   std::vector<float>    simValues;
+  std::vector<int> simMapAncestor;
 
   std::vector<int>      recoEvent;
   std::vector<int>      recoIEta;
   std::vector<int>      recoIPhi;
   std::vector<float>    recoValues;
 
-  std::vector<float>    caloR;
-  std::vector<float>    caloE;
-  std::vector<float>    caloPPt;
-  std::vector<float>    caloPPhi;
-  std::vector<float>    caloPEta;
-  std::vector<float>    caloEta;
-  std::vector<float>    caloPhi;
-  std::vector<float>    caloPDG;
-  std::vector<int>      caloEvent;
-  std::vector<int>      caloSubEvent;
-  std::vector<int>      caloIEta;
-  std::vector<int>      caloIPhi;
-  std::vector<int>      caloValues;
-  std::vector<float>    caloValuesE;
-  std::vector<uint64_t> caloTrackId;
-  std::vector<uint64_t> caloParentTrackId;
-  std::vector<uint64_t> caloAncestorTrackId;
-  std::vector<float>    caloEBEnergy;
-  std::vector<float>    caloCentroidIEta;
-  std::vector<float>    caloCentroidIPhi;
-  std::vector<uint64_t> caloScaleId; // trackId for which we store the scale factor
-  std::vector<float>    caloScaleFactor; 
-
   std::vector<float>    genE;
   std::vector<float>    genPPt;
   std::vector<float>    genPPhi;
   std::vector<float>    genPEta;
-  std::vector<float>    genEta;
-  std::vector<float>    genPhi;
+  std::vector<float>    genIEta;
+  std::vector<float>    genIPhi;
   std::vector<float>    genEtaF;
   std::vector<float>    genPhiF;
-  std::vector<float>    genEta2F;
-  std::vector<float>    genPhi2F;
   std::vector<uint64_t> genTrackId;
   std::vector<int>      genEvent;
   std::vector<int>      genIsConverted;
@@ -197,9 +161,6 @@ private:
   std::vector<float>  pfPhi;
   std::vector<float>  pfEta;
   std::vector<double> pfE;
-  std::vector<double> pfX;
-  std::vector<double> pfY;
-  std::vector<double> pfZ;
 
   std::vector<int>   mlEvent;
   std::vector<int>   mlN;        // which sample (0..numClusters-1)
@@ -210,13 +171,19 @@ private:
   std::vector<float> mlSeed;
 
   std::vector<int>   fineEvent, fineTrackId, finePDG, fineNHits;
-  std::vector<float> fineEBEnergy;
+  std::vector<float> fineE;
   std::vector<float> fineInitialE, fineInitialEta, fineInitialPhi;
   std::vector<int>   fineCrossedBoundary;
   std::vector<float> fineEntIEta, fineEntIPhi, fineEntE;     // at ECAL entrance
   std::vector<float> fineEntX, fineEntY, fineEntZ;           // global cm
   std::vector<int>   fineParentId, fineAncestorId, fineGenIdx;
-  TTree* fineTree;
+  
+  std::vector<int>   fineMapEvent;
+  std::vector<int>   fineMapIEta, fineMapIPhi;
+  std::vector<uint64_t> fineMapTrackId;
+  std::vector<float> fineMapEnergy;
+  std::vector<float> fineMapFraction;
+  std::vector<int> fineMapAncestor;
 
   std::map<unsigned, unsigned> geantToIndex_;
 };

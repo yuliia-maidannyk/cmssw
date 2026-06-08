@@ -21,8 +21,8 @@ namespace edm {
 
   protected:
     // data members
-    double fMinPt;
-    double fMaxPt;
+    double fMinE;
+    double fMaxE;
 
     std::vector<int> fInConeIds;
     double fMinDeltaR;

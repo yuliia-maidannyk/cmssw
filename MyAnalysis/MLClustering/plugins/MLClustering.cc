@@ -287,8 +287,6 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     float iphi = 0;
     float ieta_f = 0.;
     float iphi_f = 0.;
-    float ieta_2f = 0.;
-    float iphi_2f = 0.;
     if (pdgId == 22 && iPV >= 0) {
       // Match GenParticle photon to SimTrack photon by kinematic proximity
       float minDR = 0.1;  // dR matching threshold
@@ -355,23 +353,19 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
             DetId closestCell = barrelGeom_->getClosestCell(gp);
             EBDetId ebid(closestCell);
 
-            ieta = static_cast<float>(ebid.ieta());
-            iphi = static_cast<float>(ebid.iphi());
-
-            std::pair<float, float> fractional = barrelGeom_->getClosestCellFractional(gp);
-            ieta_f = fractional.first;
-            iphi_f = fractional.second;
+            int ieta = ebid.ieta();
+            int iphi = ebid.iphi();
 
             auto cell = barrelGeom_->getGeometry(ebid);
             float dEta = hitEta - cell->etaPos();
             float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
-            ieta_2f = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
-            iphi_2f = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
+            ieta_f = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
+            iphi_f = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
         } else {
           // propagation failed, fall back
           edm::LogWarning("MLClustering") << "Propagation to ECAL entrance failed for GenParticle with trackId " << bestTrackId << ". Storing fallback values.";
-          ieta_2f = -999.0f; // invalid value
-          iphi_2f = -999.0f; // invalid value
+          ieta_f = -999.0f; // invalid value
+          iphi_f = -999.0f; // invalid value
         }
       }
 #if INFER
@@ -390,12 +384,10 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
       genPEta.push_back(eta);
       genPPhi.push_back(phi);
       genPPt.push_back(pt);
-      genEta.push_back(ieta);
-      genPhi.push_back(iphi);
+      genIEta.push_back(ieta);
+      genIPhi.push_back(iphi);
       genEtaF.push_back(ieta_f);
       genPhiF.push_back(iphi_f);
-      genEta2F.push_back(ieta_2f);
-      genPhi2F.push_back(iphi_2f);
       genE.push_back(energy);
       genIsConverted.push_back(isConverted);
       genConvR.push_back(convR);
@@ -450,181 +442,14 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     }
   }
 
-  // **************** Loop over the CaloParticles ****************
-
-  int nsimhits = 0;
-  CaloMapType caloMap;
-  std::map<uint64_t, float> caloScaleMap; // trackId -> energy scale factor
-  for (const auto& cp : *caloParticles) {
-    nsimhits = 0;
-    
-    // std::cout << "GenParticle ID " << cp.pdgId() << ", energy = " << cp.energy() << ", eta = " << cp.eta() << ", phi = " << cp.phi() << std::endl;
-    
-    // Access sim clusters associated with this calo particle
-    const auto& simClusters = cp.simClusters();
-
-    // std::cout << "GenParticle has " << simClusters.size() << " associated sim clusters." << std::endl;
-    for (const auto& sc : simClusters) {
-
-      if (PRINT_DEBUG) {
-        std::cout << *sc << std::endl;
-      }
-      caloEvent.push_back(iEvent.id().event());
-      caloPDG.push_back(sc->pdgId());
-      double eta = sc->eta();
-      double phi = sc->phi();
-      float simClusterTrueE = sc->energy();
-      caloPEta.push_back(eta);
-      caloPPhi.push_back(phi);
-      caloE.push_back(simClusterTrueE);
-      caloPPt.push_back(sc->pt());
-
-      const auto& g4tk = *(sc->g4Track_begin());
-      int tkId = g4tk.trackId();
-      caloTrackId.push_back(tkId);
-
-      float ebEnergy = 0.f;
-      float sumWEta  = 0.f;
-      float sumSin  = 0.f;
-      float sumCos  = 0.f;
-
-      // Get the sim hits associated with this sim cluster
-      const auto& hitAndEnergies = sc->hits_and_energies();
-      for (const auto& hitAndEnergy : hitAndEnergies) {
-        DetId hitId(hitAndEnergy.first);
-        float hitE = hitAndEnergy.second;
-        if (hitId.subdetId() != EcalBarrel) continue;
-
-        EBDetId ebid(hitId);
-        ebEnergy += hitE;
-        sumWEta  += hitE * ebid.ieta();
-        // Convert iphi to angle, compute circular mean
-        float angle = ebid.iphi() * (2.f * M_PI / 360.f);
-        sumSin += hitE * std::sin(angle);
-        sumCos += hitE * std::cos(angle);
-
-        caloMap[{ebid.ieta(), ebid.iphi()}].push_back({tkId, hitE});
-        nsimhits++;
-      }
-      caloScaleMap[tkId] = (ebEnergy > 0) ? simClusterTrueE / ebEnergy : 1.0f;
-
-      // Energy-weighted centroid in crystal coordinates
-      float centroidIEta = (ebEnergy > 0) ? sumWEta / ebEnergy : -999.f;
-      float centroidIPhi = -999.f;
-      if (ebEnergy > 0) {
-          float meanAngle = std::atan2(sumSin / ebEnergy, sumCos / ebEnergy);
-          if (meanAngle < 0) meanAngle += 2.f * M_PI;  // wrap to [0, 2pi]
-          centroidIPhi = meanAngle * (360.f / (2.f * M_PI));  // back to iphi units [0, 360]
-          if (centroidIPhi < 1.f) centroidIPhi += 360.f;      // EB iphi is 1-based
-      }
-      caloEBEnergy.push_back(ebEnergy);
-      caloCentroidIEta.push_back(centroidIEta);
-      caloCentroidIPhi.push_back(centroidIPhi);
-
-      auto it = decayTree.find(tkId);
-      if (it != decayTree.end()) {
-        const TrackNode& node = it->second;
-        
-        // Walk up to find the gen-level ancestor
-        int ancestorId = tkId;
-        int current = tkId;
-        while (decayTree.count(current) && decayTree[current].parentTrackId >= 0) {
-          current = decayTree[current].parentTrackId;
-          if (decayTree[current].genPartIdx >= 0)
-            ancestorId = current;
-        }
-        caloParentTrackId.push_back(node.parentTrackId);
-        caloAncestorTrackId.push_back(ancestorId);
-      }
-
-      // Get production vertex
-      double vx = 0., vy = 0., vz = 0.;
-      int vtxIdx = g4tk.vertIndex();
-      if (vtxIdx >= 0 && vtxIdx < (int)simVertexes->size()) {
-          const SimVertex& vtx = (*simVertexes)[vtxIdx];
-          vx = vtx.position().x();
-          vy = vtx.position().y();
-          vz = vtx.position().z();
-      }
-      caloR.push_back(sqrt(vx*vx + vy*vy));
-
-      // Build RawParticle
-      math::XYZTLorentzVector mom = g4tk.momentum();
-      math::XYZTLorentzVector pos(vx, vy, vz, 0.);
-
-      RawParticle particle(mom, pos, g4tk.charge());
-
-      float strength = magField_->inTesla(GlobalPoint(vx,vy,vz)).z();
-      BaseParticlePropagator prop(particle, 0., 0., strength);
-      prop.setMagneticField(strength);
-      prop.propagateToEcalEntrance(false);
-
-      if (prop.getSuccess() != 0) {
-          math::XYZTLorentzVector ecalPos = prop.particle().vertex();
-          double hitEta = ecalPos.eta();
-          double hitPhi = ecalPos.phi();
-
-          // Only store if propagated into barrel eta range
-          if (std::abs(hitEta) < 1.479) {
-            
-            GlobalPoint gp(ecalPos.x(), ecalPos.y(), ecalPos.z());
-            DetId closestCell = barrelGeom_->getClosestCell(gp);
-            EBDetId ebid(closestCell);
-            // std::pair<float, float> fractional = barrelGeom_->getClosestCellFractional(gp);
-
-            // caloEta.push_back(fractional.first);
-            // caloPhi.push_back(fractional.second);
-
-            int ieta = ebid.ieta();
-            int iphi = ebid.iphi();
-
-            auto cell = barrelGeom_->getGeometry(ebid);
-
-            float dEta = hitEta - cell->etaPos();
-            float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
-            float ieta_2f = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
-            float iphi_2f = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
-
-            caloEta.push_back(ieta_2f);
-            caloPhi.push_back(iphi_2f);
-
-          } else {
-              // endcap
-              caloEta.push_back(-999.0f); // invalid value
-              caloPhi.push_back(-999.0f); // invalid value
-          }
-      } else {
-        // propagation failed, fall back
-        edm::LogWarning("MLClustering") << "Propagation to ECAL entrance failed for CaloParticle with trackId " << g4tk.trackId() << ". Storing fallback values.";
-        caloEta.push_back(-999.0f); // invalid value
-        caloPhi.push_back(-999.0f); // invalid value
-      }
-    } // end of sim cluster loop
-  } // end of calo particle loop
-
-  for (const auto& [key, scNumbers] : caloMap) {
-    for (const auto& scNumAndE : scNumbers) {
-      caloIEta.push_back(key.first);
-      caloIPhi.push_back(key.second);
-      caloValues.push_back(scNumAndE.first);
-      caloValuesE.push_back(scNumAndE.second);
-      caloSubEvent.push_back(iEvent.id().event());
-    }
-  }
-  for (const auto& [key, scale] : caloScaleMap) {
-    caloScaleId.push_back(key);
-    caloScaleFactor.push_back(scale);
-  }
-
   // **************** Loop over the EB SIM hits ****************
 
-  MapType simMap;
+  std::map<std::pair<std::pair<int,int>, int>, float> simCellTrack;
 
   for (std::vector<PCaloHit>::iterator isim = theEBCaloHits.begin(); isim != theEBCaloHits.end(); ++isim) {
     if (isim->time() > 500.) {
       continue;
     }
-
     EBDetId ebid(isim->id());
 
     // std::cout << " CaloHit " << isim->getName() << "\n"
@@ -635,145 +460,33 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
 
     int ieta = ebid.ieta();
     int iphi = ebid.iphi();
-    simMap[std::make_pair(ieta, iphi)] += isim->energy();
+    auto cell = std::make_pair(ebid.ieta(), ebid.iphi());
+    simCellTrack[{cell, isim->geantTrackId()}] += isim->energy();
 
     simTrackId.push_back(isim->geantTrackId());
-    simT.push_back(isim->time());
     simEta.push_back(ieta);
     simPhi.push_back(iphi);
     simEvent.push_back(iEvent.id().event());
   }
 
-  for (const auto& [key, val] : simMap) {
-    simIEta.push_back(key.first);
-    simIPhi.push_back(key.second);
-    simValues.push_back(val);
+  for (const auto& [key, ei] : simCellTrack) {
+    const auto& [cell, tkId] = key;
     simSubEvent.push_back(iEvent.id().event());
-  }
+    simIEta.push_back(cell.first);
+    simIPhi.push_back(cell.second);
+    simValues.push_back(ei);
+    simMapFraction.push_back(1.0);
 
-  // **************** Build SimTrack table ****************
-
-  // Map from SimTrack trackId -> index in genParticle collection
-  // Only filled for gen-level particles (genPartIdx >= 0)
-  std::map<unsigned, int> simTrackIdToGenIdx;
-  for (const auto& tk : *simTracks) {
-      if (tk.genpartIndex() >= 0) {
-          simTrackIdToGenIdx[tk.trackId()] = tk.genpartIndex();
-      }
-  }
-
-  auto findGenAncestor = [&](unsigned tkId) -> std::pair<unsigned, int> {
-    unsigned current = tkId;
-    for (int depth = 0; depth < 100; ++depth) {
-        auto git = simTrackIdToGenIdx.find(current);
-        if (git != simTrackIdToGenIdx.end())
-            return {current, git->second};
-        auto nit = decayTree.find(current);
-        if (nit == decayTree.end() || nit->second.parentTrackId <= 0)
-            break;
-        current = (unsigned)nit->second.parentTrackId;
+    int ancestorId = tkId, current = tkId;
+    auto it = decayTree.find(tkId);
+    if (it != decayTree.end()) {
+        while (decayTree.count(current) && decayTree[current].parentTrackId >= 0) {
+            current = decayTree[current].parentTrackId;
+            if (decayTree.count(current) && decayTree[current].genPartIdx >= 0)
+                ancestorId = current;
+        }
     }
-    return {0u, -1};
-  };
-
-  // Build set of SimTrack trackIds that have EB deposits
-  // (from SimClusters, which you still need for hit-level info)
-  std::map<unsigned, std::pair<float,float>> tkIdToEBPos; // trackId -> (ieta, iphi) from propagation
-  std::map<unsigned, float> tkIdToEBEnergy;               // trackId -> EB deposited energy
-
-  for (const auto& cp : *caloParticles) {
-      for (const auto& sc : cp.simClusters()) {
-          unsigned tkId = sc->g4Track_begin()->trackId();
-          float ebE = 0.f;
-          for (const auto& [rawId, hitEnergy] : sc->hits_and_energies()) {
-            DetId hitId(rawId);  // wrap the uint32_t in a DetId first
-            if (hitId.subdetId() == EcalBarrel)
-                ebE += hitEnergy;
-          }
-          tkIdToEBEnergy[tkId] += ebE;
-      }
-  }
-
-  // Loop over ALL SimTracks
-  for (const auto& tk : *simTracks) {
-      unsigned tkId = tk.trackId();
-
-      simTkEvent.push_back(iEvent.id().event());
-      simTkTrackId.push_back(tkId);
-      simTkPDG.push_back(tk.type());
-      simTkE.push_back(tk.momentum().e());
-      simTkEta.push_back(tk.momentum().eta());
-      simTkPhi.push_back(tk.momentum().phi());
-      simTkGenIdx.push_back(tk.genpartIndex());
-
-      // Production vertex
-      float vx = 0.f, vy = 0.f, vz = 0.f;
-      int vtxIdx = tk.noVertex() ? -1 : tk.vertIndex();
-      if (vtxIdx >= 0 && vtxIdx < (int)simVertexes->size()) {
-          const SimVertex& vtx = (*simVertexes)[vtxIdx];
-          vx = vtx.position().x();
-          vy = vtx.position().y();
-          vz = vtx.position().z();
-      }
-      simTkConvR.push_back(std::sqrt(vx*vx + vy*vy));
-
-      // Parent from decayTree
-      auto nit = decayTree.find(tkId);
-      int parentId = (nit != decayTree.end()) ? nit->second.parentTrackId : -1;
-      simTkParentId.push_back(parentId);
-
-      // Gen ancestor
-      auto [genAncTkId, genIdx] = findGenAncestor(tkId);
-      simTkAncestorId.push_back(genAncTkId);
-
-      // EB energy deposit (0 if this track has no ECAL hits)
-      auto eit = tkIdToEBEnergy.find(tkId);
-      simTkEBEnergy.push_back(eit != tkIdToEBEnergy.end() ? eit->second : 0.f);
-
-      // Propagate to ECAL entrance for ieta/iphi
-      math::XYZTLorentzVector mom = tk.momentum();
-      math::XYZTLorentzVector pos(vx, vy, vz, 0.);
-      RawParticle particle(mom, pos, tk.charge());
-      float strength = magField_->inTesla(GlobalPoint(vx, vy, vz)).z();
-      BaseParticlePropagator prop(particle, 0., 0., strength);
-      prop.setMagneticField(strength);
-      prop.propagateToEcalEntrance(false);
-
-      if (prop.getSuccess() != 0) {
-          math::XYZTLorentzVector ecalPos = prop.particle().vertex();
-          double hitEta = ecalPos.eta();
-          double hitPhi = ecalPos.phi();
-
-          if (std::abs(hitEta) < 1.479) {
-            GlobalPoint gp(ecalPos.x(), ecalPos.y(), ecalPos.z());
-            DetId closestCell = barrelGeom_->getClosestCell(gp);
-            EBDetId ebid(closestCell);
-
-            auto cell = barrelGeom_->getGeometry(ebid);
-
-            int ieta = ebid.ieta();
-            int iphi = ebid.iphi();
-
-            float dEta = hitEta - cell->etaPos();
-            float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
-            float ieta_2f = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
-            float iphi_2f = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
-
-            simTkIEta.push_back(ieta_2f);
-            simTkIPhi.push_back(iphi_2f);
-
-            // std::pair<float, float> fractional = barrelGeom_->getClosestCellFractional(gp);
-            // simTkIEta.push_back(fractional.first);
-            // simTkIPhi.push_back(fractional.second);
-
-          } else {
-            simTkIEta.push_back(-999.f);
-            simTkIPhi.push_back(-999.f);
-          }
-      } else {
-        simTkIEta.push_back(-999.f);
-        simTkIPhi.push_back(-999.f);
-      }
+    simMapAncestor.push_back(ancestorId);
   }
 
   // **************** Loop over the EB REC hits ****************
@@ -869,22 +582,23 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
   for (const auto& tk : *simTracks) tkById[tk.trackId()] = &tk;
 
   // Accumulate EB deposits per fine track id (== boundary-crossing parent)
-  struct FineAcc { float e=0.f, eEM=0.f, eHad=0.f; int n=0; };
+  struct FineAcc {
+    float ei=0.f;
+    int ni=0;
+  };
   std::map<int, FineAcc> fineAcc;
   for (const auto& hit : theEBCaloHits) {
     if (hit.time() > 500.) continue;
     FineAcc& a = fineAcc[hit.geantTrackId()];
-    a.e    += hit.energy();
-    a.eEM  += hit.energyEM();
-    a.eHad += hit.energyHad();
-    a.n    += 1;
+    a.ei += hit.energy();
+    a.ni += 1;
   }
 
   for (const auto& [tkId, acc] : fineAcc) {
     fineEvent.push_back(iEvent.id().event());
     fineTrackId.push_back(tkId);
-    fineNHits.push_back(acc.n);
-    fineEBEnergy.push_back(acc.e);
+    fineNHits.push_back(acc.ni);
+    fineE.push_back(acc.ei);
 
     const SimTrack* tk = tkById.count((unsigned)tkId) ? tkById[(unsigned)tkId] : nullptr;
     finePDG.push_back(tk ? tk->type() : 0);
@@ -939,14 +653,49 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     fineParentId.push_back(parentId);
     fineAncestorId.push_back(ancestorId);
   }
+  // ---- Fine-calo hits_and_fractions analog ----
+  // Two-pass: first accumulate total energy per cell,
+  // then compute per-(cell,track) fraction exactly like SimCluster::hits_and_fractions().
+
+  std::map<std::pair<int,int>, float> cellTotalE;
+  std::map<std::pair<std::pair<int,int>, int>, float> cellTrackE; // ((ieta,iphi), trackId) -> E
+
+  for (const auto& hit : theEBCaloHits) {
+      if (hit.time() > 500.) continue;
+      EBDetId ebid(hit.id());
+      auto cell = std::make_pair(ebid.ieta(), ebid.iphi());
+      cellTotalE[cell] += hit.energy();
+      cellTrackE[{cell, hit.geantTrackId()}] += hit.energy();
+  }
+
+  for (const auto& [key, ei] : cellTrackE) {
+      const auto& [cell, tkId] = key;
+      float total = cellTotalE.at(cell);
+      fineMapEvent.push_back(iEvent.id().event());
+      fineMapIEta.push_back(cell.first);
+      fineMapIPhi.push_back(cell.second);
+      fineMapTrackId.push_back(tkId);
+      fineMapEnergy.push_back(ei);
+      fineMapFraction.push_back(total > 0.f ? ei / total : 0.f);
+
+      int ancestorId = tkId, current = tkId;
+      auto it = decayTree.find(tkId);
+      if (it != decayTree.end()) {
+        while (decayTree.count(current) && decayTree[current].parentTrackId >= 0) {
+          current = decayTree[current].parentTrackId;
+          if (decayTree.count(current) && decayTree[current].genPartIdx >= 0) ancestorId = current;
+        }
+      }
+      fineMapAncestor.push_back(ancestorId);
+  }
 
   // **************** Loop over the PFClusters ****************
 
   for (const auto& pf : *pfClusters)
   {
     pfEvent.push_back(iEvent.id().event());
-    //float corr_E = static_cast<float>(pf.correctedEnergy());
-    float corr_E = static_cast<float>(pf.energy());
+    float corr_E = static_cast<float>(pf.correctedEnergy());
+    //float corr_E = static_cast<float>(pf.energy());
     pfE.push_back(corr_E);
 
     math::XYZPoint pfPos = pf.position();
@@ -960,31 +709,14 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     float hitPhi = pf.positionREP().Phi();
 
     const CaloCellGeometry* cell = barrelGeom_->getGeometry(ebid);
-    //std::cout << *cell << std::endl;
-
-    // fractional position within crystal: -1 (low edge) to +1 (high edge)
-    // float localEta = (hitEta - cell->etaPos()) / (cell->etaSpan() / 2.f);
-    // float localPhi = (hitPhi - cell->phiPos());
-    // while (localPhi >  M_PI) localPhi -= 2*M_PI;
-    // while (localPhi < -M_PI) localPhi += 2*M_PI;
-    // localPhi = localPhi / (cell->phiSpan() / 2.f);
-
-    // float ieta_2f = ieta + 0.5f * (localEta + 1.0f); // [ieta, ieta+1] crystal center @ 0.5
-    // float iphi_2f = iphi + 0.5f * (localPhi + 1.0f); // [iphi, iphi+1] crystal center @ 0.5
 
     float dEta = hitEta - cell->etaPos();
     float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
     float ieta_f = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
     float iphi_f = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
 
-    // std::pair<float, float> fractional = barrelGeom_->getClosestCellFractional(gp);
-    // float ieta_f = fractional.first;
-    // float iphi_f = fractional.second;
-
     pfEta.push_back(ieta_f);
     pfPhi.push_back(iphi_f);
-    pfX.push_back(ieta_f);
-    pfY.push_back(iphi_f);
 
     if (PRINT_DEBUG) {std::cout << " PFCluster E=" << corr_E << " at (" << ieta << ", " << iphi << ")" << std::endl;}
   }
@@ -1147,61 +879,33 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
 #endif
   simTree->Fill();
   recoTree->Fill();
-  caloTree->Fill();
   genTree->Fill();
   pfTree->Fill();
-  simTkTree->Fill();
   fineTree->Fill();
 } // --- end of analyze
 
 void MLClustering::clearEventData() {
   simPDG.clear(); simT.clear(); simE.clear(); simPhi.clear(); simEta.clear();
   simEvent.clear(); simSubEvent.clear(); simTrackId.clear(); simIEta.clear();
-  simIPhi.clear(); simValues.clear();
+  simIPhi.clear(); simValues.clear(); simMapTrackId.clear(); simMapFraction.clear();
+  simMapAncestor.clear();
 
   recoEvent.clear(); recoIEta.clear(); recoIPhi.clear(); recoValues.clear();
 
-  caloE.clear();
-  caloPPt.clear();
-  caloPPhi.clear();
-  caloPEta.clear();
-  caloEta.clear();
-  caloPhi.clear();
-  caloPDG.clear();
-  caloEvent.clear();
-  caloSubEvent.clear();
-  caloIEta.clear();
-  caloIPhi.clear();
-  caloValues.clear();
-  caloValuesE.clear();
-  caloTrackId.clear();
-  caloR.clear();
-  caloAncestorTrackId.clear();
-  caloParentTrackId.clear();
-  caloEBEnergy.clear();
-  caloCentroidIEta.clear();
-  caloCentroidIPhi.clear();
-  caloScaleId.clear();
-  caloScaleFactor.clear();
-
-  genE.clear(); genPPt.clear(); genPPhi.clear(); genPEta.clear(); genEta.clear();
-  genPhi.clear(); genEtaF.clear(); genPhiF.clear(); genEta2F.clear(); genPhi2F.clear();
+  genE.clear(); genPPt.clear(); genPPhi.clear(); genPEta.clear();
+  genIEta.clear(); genIPhi.clear(); genEtaF.clear(); genPhiF.clear();
   genTrackId.clear(); genEvent.clear(); genIsConverted.clear(); genConvR.clear(); genConvZ.clear();
 
-  pfEvent.clear(); pfPhi.clear(); pfEta.clear(); 
-  pfE.clear(); pfX.clear(); pfY.clear(); pfZ.clear();
-
-  simTkEvent.clear(); simTkTrackId.clear(); simTkPDG.clear(); simTkE.clear(); simTkEta.clear();
-  simTkPhi.clear(); simTkIEta.clear(); simTkIPhi.clear(); simTkConvR.clear();
-  simTkParentId.clear(); simTkAncestorId.clear(); simTkGenIdx.clear(); simTkEBEnergy.clear();
+  pfEvent.clear(); pfPhi.clear(); pfEta.clear(); pfE.clear();
 
   fineEvent.clear(); fineTrackId.clear(); finePDG.clear(); fineNHits.clear();
-  fineEBEnergy.clear();
-  fineInitialE.clear(); fineInitialEta.clear(); fineInitialPhi.clear();
+  fineE.clear(); fineInitialE.clear(); fineInitialEta.clear(); fineInitialPhi.clear();
   fineCrossedBoundary.clear();
   fineEntIEta.clear(); fineEntIPhi.clear(); fineEntE.clear();
   fineEntX.clear(); fineEntY.clear(); fineEntZ.clear();
   fineParentId.clear(); fineAncestorId.clear(); fineGenIdx.clear();
+  fineMapEvent.clear(); fineMapIEta.clear(); fineMapIPhi.clear(); fineMapTrackId.clear();
+  fineMapEnergy.clear(); fineMapFraction.clear(); fineMapAncestor.clear();
 
 #if INFER
   mlEvent.clear();
@@ -1280,6 +984,9 @@ void MLClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::Even
   simTree->Branch("mapIEta",    &simIEta);
   simTree->Branch("mapIPhi",    &simIPhi);
   simTree->Branch("mapValues",  &simValues);
+  simTree->Branch("mapFraction",&simMapFraction);
+  simTree->Branch("mapTrackId", &simMapTrackId);
+  simTree->Branch("mapAncestor", &simMapAncestor);
 
   recoTree = fs->make<TTree>("recoTree", "A tree with reconstructed hit information");
   recoTree->Branch("event",     &recoEvent);
@@ -1287,41 +994,15 @@ void MLClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::Even
   recoTree->Branch("mapIPhi",   &recoIPhi);
   recoTree->Branch("mapValues", &recoValues);
 
-  caloTree = fs->make<TTree>("caloTree", "A tree with calo hit information");
-  caloTree->Branch("radius",    &caloR);
-  caloTree->Branch("energy",    &caloE);
-  caloTree->Branch("pt",        &caloPPt);
-  caloTree->Branch("phi",       &caloPPhi);
-  caloTree->Branch("eta",       &caloPEta);
-  caloTree->Branch("iphi",      &caloPhi);
-  caloTree->Branch("ieta",      &caloEta);
-  caloTree->Branch("pdg",       &caloPDG);
-  caloTree->Branch("event",     &caloEvent);
-  caloTree->Branch("subEvent",  &caloSubEvent);
-  caloTree->Branch("mapIEta",   &caloIEta);
-  caloTree->Branch("mapIPhi",   &caloIPhi);
-  caloTree->Branch("mapValues", &caloValues);
-  caloTree->Branch("mapValuesE", &caloValuesE);
-  caloTree->Branch("trackId",   &caloTrackId);
-  caloTree->Branch("ancestorTrackId", &caloAncestorTrackId);
-  caloTree->Branch("parentTrackId", &caloParentTrackId);
-  caloTree->Branch("EBEnergy", &caloEBEnergy);
-  caloTree->Branch("centroidIEta", &caloCentroidIEta);
-  caloTree->Branch("centroidIPhi", &caloCentroidIPhi);
-  caloTree->Branch("scaleId", &caloScaleId);
-  caloTree->Branch("scaleFactor", &caloScaleFactor);
-
   genTree = fs->make<TTree>("genTree", "A tree with gen information");
   genTree->Branch("energy",      &genE);
   genTree->Branch("pt",          &genPPt);
   genTree->Branch("phi",         &genPPhi);
   genTree->Branch("eta",         &genPEta);
-  genTree->Branch("iphi",        &genPhi);
-  genTree->Branch("ieta",        &genEta);
+  genTree->Branch("iphi",        &genIPhi);
+  genTree->Branch("ieta",        &genIEta);
   genTree->Branch("iphiF",       &genPhiF);
   genTree->Branch("ietaF",       &genEtaF);
-  genTree->Branch("iphi2F",      &genPhi2F);
-  genTree->Branch("ieta2F",      &genEta2F);
   genTree->Branch("trackId",     &genTrackId);
   genTree->Branch("event",       &genEvent);
   genTree->Branch("isConverted", &genIsConverted);
@@ -1333,31 +1014,13 @@ void MLClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::Even
   pfTree->Branch("eta",    &pfEta);
   pfTree->Branch("phi",    &pfPhi);
   pfTree->Branch("event",  &pfEvent);
-  pfTree->Branch("x",      &pfX);
-  pfTree->Branch("y",      &pfY);
-  pfTree->Branch("z",      &pfZ);
-
-  simTkTree = fs->make<TTree>("simTkTree", "One row per SimTrack");
-  simTkTree->Branch("event",      &simTkEvent);
-  simTkTree->Branch("trackId",    &simTkTrackId);
-  simTkTree->Branch("pdg",        &simTkPDG);
-  simTkTree->Branch("energy",     &simTkE);
-  simTkTree->Branch("eta",        &simTkEta);
-  simTkTree->Branch("phi",        &simTkPhi);
-  simTkTree->Branch("ieta",       &simTkIEta);
-  simTkTree->Branch("iphi",       &simTkIPhi);
-  simTkTree->Branch("convR",      &simTkConvR);
-  simTkTree->Branch("parentId",   &simTkParentId);
-  simTkTree->Branch("ancestorId", &simTkAncestorId);
-  simTkTree->Branch("genIdx",     &simTkGenIdx);
-  simTkTree->Branch("ebEnergy",   &simTkEBEnergy);
 
   fineTree = fs->make<TTree>("fineTree", "One row per fine-calo track depositing in EB");
   fineTree->Branch("event",           &fineEvent);
   fineTree->Branch("trackId",         &fineTrackId);
   fineTree->Branch("pdg",             &finePDG);
   fineTree->Branch("nHits",           &fineNHits);
-  fineTree->Branch("ebEnergy",        &fineEBEnergy);
+  fineTree->Branch("energy",          &fineE);
   fineTree->Branch("initialE",        &fineInitialE);
   fineTree->Branch("initialEta",      &fineInitialEta);
   fineTree->Branch("initialPhi",      &fineInitialPhi);
@@ -1371,6 +1034,13 @@ void MLClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::Even
   fineTree->Branch("parentId",        &fineParentId);
   fineTree->Branch("ancestorId",      &fineAncestorId);
   fineTree->Branch("genIdx",          &fineGenIdx);
+  fineTree->Branch("mapEvent",       &fineMapEvent);
+  fineTree->Branch("mapIEta",        &fineMapIEta);
+  fineTree->Branch("mapIPhi",        &fineMapIPhi);
+  fineTree->Branch("mapTrackId",     &fineMapTrackId);
+  fineTree->Branch("mapEnergy",      &fineMapEnergy);
+  fineTree->Branch("mapFraction",    &fineMapFraction);
+  fineTree->Branch("mapAncestor",    &fineMapAncestor);
 
 #if INFER
   mlTree = fs->make<TTree>("mlTree", "ML inference output");
