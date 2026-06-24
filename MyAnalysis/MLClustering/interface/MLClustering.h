@@ -65,8 +65,6 @@
 using namespace cms::Ort;
 
 class MLClustering : public DQMOneEDAnalyzer<> {
-  typedef std::map<std::pair<int, int>, float> MapType;
-  typedef std::map<std::pair<int, int>, std::vector<std::pair<int, float>>> CaloMapType;
 
 public:
   typedef dqm::legacy::DQMStore DQMStore;
@@ -78,7 +76,7 @@ public:
 protected: 
   void bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::EventSetup const&) override;
   void fillMcTruth(std::vector<SimTrack> &simTracks, std::vector<SimVertex> &simVertices);
-  // void beginJob() override;
+  void beginJob() override;
   // void endJob() override;
   void analyze(const edm::Event&, const edm::EventSetup&) override;
   void clearEventData();
@@ -90,7 +88,7 @@ private:
   std::unique_ptr<ONNXRuntime> onnx_;
 
   std::string g4InfoLabel;
-  std::string EBHitsCollection;
+  std::string EBSimHitCollection;
   std::string jobId;
   int maskedEcalChannelStatusThreshold;
 
@@ -103,13 +101,12 @@ private:
   // Store EB: DetId <==> vector<int> (subdet, ieta, iphi, status)
   std::map<DetId, std::vector<int>> EcalAllDeadChannelsBitMap_;
 
-  edm::EDGetTokenT<edm::PCaloHitContainer> EBHitsToken;
+  edm::EDGetTokenT<edm::PCaloHitContainer> EBSimHitToken;
   edm::EDGetTokenT<reco::GenParticleCollection> genParticleToken;
   edm::EDGetTokenT<reco::PFClusterCollection> pfClusterToken;
   edm::EDGetTokenT<edm::SimTrackContainer> SimTrackToken;
   edm::EDGetTokenT<edm::SimVertexContainer> SimVertexToken;
-  edm::EDGetTokenT<EBRecHitCollection> EBrechitCollection_Token;
-  edm::EDGetTokenT<CaloParticleCollection> CaloParticle_Token;
+  edm::EDGetTokenT<EBRecHitCollection> EBRecHitToken;
   //edm::ESGetToken<CaloSubdetectorGeometry, EcalBarrelGeometryRecord> barrelGeomToken;
   edm::ESGetToken<CaloGeometry, CaloGeometryRecord> ecalGeomToken;
   edm::ESGetToken<EcalChannelStatus, EcalChannelStatusRcd> ecalStatusToken;
@@ -136,12 +133,18 @@ private:
   std::vector<float>    simMapFraction;
   std::vector<uint64_t> simMapTrackId;
   std::vector<float>    simValues;
-  std::vector<int> simMapAncestor;
+  std::vector<int>      simMapAncestor;
 
   std::vector<int>      recoEvent;
   std::vector<int>      recoIEta;
   std::vector<int>      recoIPhi;
   std::vector<float>    recoValues;
+  std::vector<int>      recoMapEvent;
+  std::vector<int>      recoMapIEta;
+  std::vector<int>      recoMapIPhi;
+  std::vector<float>    recoMapValues;
+  std::vector<float>    recoMapFraction;
+  std::vector<int>      recoMapAncestor;
 
   std::vector<float>    genE;
   std::vector<float>    genPPt;
@@ -178,12 +181,12 @@ private:
   std::vector<float> fineEntX, fineEntY, fineEntZ;           // global cm
   std::vector<int>   fineParentId, fineAncestorId, fineGenIdx;
   
-  std::vector<int>   fineMapEvent;
-  std::vector<int>   fineMapIEta, fineMapIPhi;
+  std::vector<int>      fineMapEvent;
+  std::vector<int>      fineMapIEta, fineMapIPhi;
   std::vector<uint64_t> fineMapTrackId;
-  std::vector<float> fineMapEnergy;
-  std::vector<float> fineMapFraction;
-  std::vector<int> fineMapAncestor;
+  std::vector<float>    fineMapEnergy;
+  std::vector<float>    fineMapFraction;
+  std::vector<int>      fineMapAncestor;
 
   std::map<unsigned, unsigned> geantToIndex_;
 };

@@ -8,26 +8,21 @@
 
 #include <fstream>
 
-#define INFER 0
-#define PRINT_DEBUG 0
+#define INFER 1
+#define PRINT_DEBUG 1
 
 std::vector<float> build_energy_map(
     const std::vector<int>&   ieta_vec,
     const std::vector<int>&   iphi_vec,
     const std::vector<float>& energy_vec)
 {
-    std::vector<float> map(361 * 170, 0.f);
+    std::vector<float> map(361 * 171, 0.f);
     for (size_t i = 0; i < ieta_vec.size(); ++i) {
-        int col = ieta_vec[i];
-        if (col < 0) {
-          col += 85; // ieta in [-85,-1] → col in [0,84]
-        } else {
-          col += 84; // ieta in [1,85] → col in [85,169]
-        }
-        int row = iphi_vec[i];                // iphi → [1,360]
+        int col = ieta_vec[i] + 85; // shift ieta from [-85, 85] to [0, 170]
+        int row = iphi_vec[i];  // iphi → [1,360]
         if (row < 0 || row >= 361) continue;
-        if (col < 0 || col >= 170) continue;
-        map[row * 170 + col] += energy_vec[i];
+        if (col < 0 || col >= 171) continue;
+        map[row * 171 + col] += energy_vec[i];
     }
     return map;
 }
@@ -38,16 +33,16 @@ void apply_blackout(
     const std::vector<int>&   seed_ieta,
     const std::vector<bool>&  is_converted)
 {
-    const int pad = 15; // blackout pad size in ieta and iphi
+    const int pad = 30; // blackout pad size in ieta and iphi
     for (size_t j = 0; j < is_converted.size(); ++j) {
         if (!is_converted[j]) continue; // continue if it has not been converted
         int r0 = std::max(0, seed_iphi[j] - pad);
         int r1 = std::min(361, seed_iphi[j] + pad);
         int c0 = std::max(0, seed_ieta[j] - pad);
-        int c1 = std::min(170, seed_ieta[j] + pad);
+        int c1 = std::min(171, seed_ieta[j] + pad);
         for (int r = r0; r < r1; ++r)
             for (int c = c0; c < c1; ++c)
-                map[r * 170 + c] = 0.f;
+                map[r * 171 + c] = 0.f;
     }
 }
 
@@ -56,7 +51,7 @@ MLClustering::MLClustering(const edm::ParameterSet& iConfig)
   : input_names_(iConfig.getParameter<std::vector<std::string>>("input_names")),
     input_shapes_(),
     g4InfoLabel(iConfig.getParameter<std::string>("moduleLabelG4")),
-    EBHitsCollection(iConfig.getParameter<std::string>("EBHitsCollection")),
+    EBSimHitCollection(iConfig.getParameter<std::string>("EBSimHitCollection")),
     jobId(iConfig.getParameter<std::string>("jobId")),
     maskedEcalChannelStatusThreshold(iConfig.getParameter<int>("maskedEcalChannelStatusThreshold")),
     cropSize(iConfig.getParameter<int>("cropSize")),
@@ -79,16 +74,12 @@ MLClustering::MLClustering(const edm::ParameterSet& iConfig)
           iConfig.getParameter<std::string>("model_path"), &cpuOpts);
   }
 
-  EBrechitCollection_Token = consumes<EBRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBrechitCollection"));
-  EBHitsToken = consumes<edm::PCaloHitContainer>(edm::InputTag(std::string(g4InfoLabel), std::string(EBHitsCollection)));
+  EBRecHitToken = consumes<EBRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBRecHitCollection"));
+  EBSimHitToken = consumes<edm::PCaloHitContainer>(edm::InputTag(std::string(g4InfoLabel), std::string(EBSimHitCollection)));
   genParticleToken = consumes<reco::GenParticleCollection>(iConfig.getParameter<edm::InputTag>("genParticles"));
   SimTrackToken = consumes<edm::SimTrackContainer>(iConfig.getParameter<edm::InputTag>("simTrackCollection"));
   SimVertexToken = consumes<edm::SimVertexContainer>(iConfig.getParameter<edm::InputTag>("simVertexCollection"));
-  CaloParticle_Token = consumes<CaloParticleCollection>(iConfig.getParameter<edm::InputTag>("CaloParticleCollection"));
   pfClusterToken = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECAL"));
-  //barrelGeomToken = esConsumes<CaloSubdetectorGeometry, EcalBarrelGeometryRecord>(edm::ESInputTag("", "EcalBarrel"));
-  // ecalGeomToken = esConsumes<CaloGeometry, CaloGeometryRecord>();
-  // ecalStatusToken = esConsumes<EcalChannelStatus, EcalChannelStatusRcd>();
   ecalGeomToken = esConsumes<CaloGeometry, CaloGeometryRecord, edm::Transition::BeginRun>();
   ecalStatusToken = esConsumes<EcalChannelStatus, EcalChannelStatusRcd, edm::Transition::BeginRun>();
   magFieldToken = esConsumes<MagneticField, IdealMagneticFieldRecord>();
@@ -111,23 +102,18 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
   }
 
 #if INFER
-  std::vector<std::vector<int>> dead_grid(361, std::vector<int>(170, 1)); // default = 1
+  std::vector<std::vector<int>> dead_grid(361, std::vector<int>(171, 1)); // default = 1
 
   for (const auto& [detid, bitVec] : EcalAllDeadChannelsBitMap_) {
       int ieta = bitVec[1];
       int iphi = bitVec[2];
       int status = bitVec[3];
 
-      int ieta_shifted = ieta;
-      if (ieta_shifted < 0) {
-        ieta_shifted += 85; // ieta in [-85,-1] → [0,84]
-      } else {
-        ieta_shifted += 84; // ieta in [1,85] → [85,169]
-      }
+      int ieta_shifted = ieta + 85; // shift ieta from [-85, 85] to [0, 170]
       int iphi_shifted = iphi; // [1, 360]
 
       if (iphi_shifted < 0 || iphi_shifted >= 361) continue;
-      if (ieta_shifted < 0 || ieta_shifted >= 170) continue;
+      if (ieta_shifted < 0 || ieta_shifted >= 171) continue;
 
       int val = 1; // ok
       if (status >= 3 && status <= 10)
@@ -141,23 +127,20 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
 
   // ***************** Get the collections *****************
 
-  edm::Handle<edm::PCaloHitContainer> EcalHitsEB;
-  iEvent.getByToken(EBHitsToken, EcalHitsEB);
+  edm::Handle<edm::PCaloHitContainer> EBSimHitHandle;
+  iEvent.getByToken(EBSimHitToken, EBSimHitHandle);
 
-  std::vector<PCaloHit> theEBCaloHits;
-  theEBCaloHits.insert(theEBCaloHits.end(), EcalHitsEB->begin(), EcalHitsEB->end());
-
-  edm::Handle<CaloParticleCollection> caloParticles;
-  iEvent.getByToken(CaloParticle_Token, caloParticles);
+  std::vector<PCaloHit> EBSimHit;
+  EBSimHit.insert(EBSimHit.end(), EBSimHitHandle->begin(), EBSimHitHandle->end());
 
   edm::Handle<reco::GenParticleCollection> genParticles;
   iEvent.getByToken(genParticleToken, genParticles);
   
   const EBRecHitCollection *EBRecHit = nullptr;
-  edm::Handle<EBRecHitCollection> EcalRecHitEB;
-  iEvent.getByToken(EBrechitCollection_Token, EcalRecHitEB);
-  if (EcalRecHitEB.isValid()) {
-    EBRecHit = EcalRecHitEB.product();
+  edm::Handle<EBRecHitCollection> EBRecHitHandle;
+  iEvent.getByToken(EBRecHitToken, EBRecHitHandle);
+  if (EBRecHitHandle.isValid()) {
+    EBRecHit = EBRecHitHandle.product();
   }
 
   edm::Handle<reco::PFClusterCollection> pfClusters;
@@ -444,39 +427,30 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
 
   // **************** Loop over the EB SIM hits ****************
 
-  std::map<std::pair<std::pair<int,int>, int>, float> simCellTrack;
+  std::map<std::pair<std::pair<int,int>, int>, float> simCellTrack; // key: ((ieta, iphi), ancestorId) -> energy
+  std::map<std::pair<int,int>, float> simCellTotal; // key: (ieta, iphi) -> total energy
+  // Build a map from DetId -> geantTrackIds
+  std::map<uint32_t, std::vector<uint32_t>> detIdToTrackIds;
 
-  for (std::vector<PCaloHit>::iterator isim = theEBCaloHits.begin(); isim != theEBCaloHits.end(); ++isim) {
-    if (isim->time() > 500.) {
+  for (std::vector<PCaloHit>::iterator simHit = EBSimHit.begin(); simHit != EBSimHit.end(); ++simHit) {
+    if (simHit->time() > 500.) {
       continue;
     }
-    EBDetId ebid(isim->id());
+    detIdToTrackIds[simHit->id()].push_back(simHit->geantTrackId());
+    EBDetId ebid(simHit->id());
 
-    // std::cout << " CaloHit " << isim->getName() << "\n"
-    //           << " DetID = " << isim->id() << " EBDetId = " << ebid.ieta() << " " << ebid.iphi() << "\n"
-    //           << " Time = " << isim->time() << "\n"
-    //           << " Track Id = " << isim->geantTrackId() << "\n"
-    //           << " Energy = " << isim->energy() << std::endl;
+    // std::cout << " CaloHit " << simHit->getName() << "\n"
+    //           << " DetID = " << simHit->id() << " EBDetId = " << ebid.ieta() << " " << ebid.iphi() << "\n"
+    //           << " Time = " << simHit->time() << "\n"
+    //           << " Track Id = " << simHit->geantTrackId() << "\n"
+    //           << " Energy = " << simHit->energy() << std::endl;
 
     int ieta = ebid.ieta();
     int iphi = ebid.iphi();
     auto cell = std::make_pair(ebid.ieta(), ebid.iphi());
-    simCellTrack[{cell, isim->geantTrackId()}] += isim->energy();
+    simCellTotal[cell] += simHit->energy();
 
-    simTrackId.push_back(isim->geantTrackId());
-    simEta.push_back(ieta);
-    simPhi.push_back(iphi);
-    simEvent.push_back(iEvent.id().event());
-  }
-
-  for (const auto& [key, ei] : simCellTrack) {
-    const auto& [cell, tkId] = key;
-    simSubEvent.push_back(iEvent.id().event());
-    simIEta.push_back(cell.first);
-    simIPhi.push_back(cell.second);
-    simValues.push_back(ei);
-    simMapFraction.push_back(1.0);
-
+    int tkId = simHit->geantTrackId();
     int ancestorId = tkId, current = tkId;
     auto it = decayTree.find(tkId);
     if (it != decayTree.end()) {
@@ -486,30 +460,74 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
                 ancestorId = current;
         }
     }
+    simCellTrack[{cell, ancestorId}] += simHit->energy();
+
+    simTrackId.push_back(simHit->geantTrackId());
+    simEta.push_back(ieta);
+    simPhi.push_back(iphi);
+    simEvent.push_back(iEvent.id().event());
+  }
+
+  for (const auto& [key, ei] : simCellTrack) {
+    const auto& [cell, ancestorId] = key;
+    float total = simCellTotal.at(cell);
+    simSubEvent.push_back(iEvent.id().event());
+    simIEta.push_back(cell.first);
+    simIPhi.push_back(cell.second);
+    simValues.push_back(ei);
+    simMapFraction.push_back(total > 0 ? ei / total : 0.f);
     simMapAncestor.push_back(ancestorId);
   }
 
   // **************** Loop over the EB REC hits ****************
 
-  MapType recoMap;
   std::vector<int> ieta_vec;
   std::vector<int> iphi_vec;
   std::vector<float> energy_vec;
+  std::map<std::pair<std::pair<int,int>, int>, float> recoCellTrack; // key: ((ieta, iphi), ancestorId) -> energy
+  std::map<std::pair<int,int>, float> recoCellTotal; // key: (ieta, iphi) -> total energy
 
   for (EcalRecHitCollection::const_iterator recHit = EBRecHit->begin(); recHit != EBRecHit->end(); ++recHit) {
     EBDetId ebid = EBDetId(recHit->id());
     int ieta = ebid.ieta();
     int iphi = ebid.iphi();
-    recoMap[std::make_pair(ieta, iphi)] += recHit->energy();
+    auto cell = std::make_pair(ebid.ieta(), ebid.iphi());
+    recoCellTotal[cell] += recHit->energy();
+
     ieta_vec.push_back(ieta);
     iphi_vec.push_back(iphi);
     energy_vec.push_back(recHit->energy());
-  }
 
-  for (const auto& [key, val] : recoMap) {
+    // Find the ancestor track ID for this hit
+    uint32_t detId = recHit->detid().rawId();
+    if (!detIdToTrackIds.count(detId)) {continue;} // no associated SimHits
+    const auto& trackIds = detIdToTrackIds.at(detId);
+    int tkId = trackIds.empty() ? -1 : trackIds[0]; // take the first associated track ID
+    int ancestorId = tkId, current = tkId;
+    auto it = decayTree.find(tkId);
+    if (it != decayTree.end()) {
+        while (decayTree.count(current) && decayTree[current].parentTrackId >= 0) {
+            current = decayTree[current].parentTrackId;
+            if (decayTree.count(current) && decayTree[current].genPartIdx >= 0)
+                ancestorId = current;
+        }
+    }
+    recoCellTrack[{cell, ancestorId}] += recHit->energy();
+  }
+  for (const auto& [key, ei] : recoCellTrack) {
+    const auto& [cell, ancestorId] = key;
+    float total = recoCellTotal.at(cell);
+    recoMapIEta.push_back(cell.first);
+    recoMapIPhi.push_back(cell.second);
+    recoMapValues.push_back(ei);
+    recoMapFraction.push_back(total > 0 ? ei / total : 0.f);
+    recoMapAncestor.push_back(ancestorId);
+    recoMapEvent.push_back(iEvent.id().event());
+  }
+  for (const auto& [key, ei] : recoCellTotal) {
     recoIEta.push_back(key.first);
     recoIPhi.push_back(key.second);
-    recoValues.push_back(val);
+    recoValues.push_back(ei);
     recoEvent.push_back(iEvent.id().event());
   }
 
@@ -517,13 +535,13 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
   std::vector<float> map = build_energy_map(ieta_vec, iphi_vec, energy_vec);
   apply_blackout(map, seed_iphi, seed_ieta, seed_isConverted);
 
-  std::cout << "Map size: " << map.size() << " (should be 61370 for 361x170)" << std::endl;
+  std::cout << "Map size: " << map.size() << " (should be 61370 for 361x171)" << std::endl;
   std::cout << "Crop Size: " << cropSize << std::endl;
   std::cout << "Seed Threshold: " << seedThreshold << std::endl;
   std::cout << "Overlap Limit: " << overlapLimit << std::endl;
   std::cout << "Max Clusters: " << maxClusters << std::endl;
 
-  auto result = get_model_samples(map, 361, 170, seedThreshold, cropSize, overlapLimit, maxClusters);
+  auto result = get_model_samples(map, 361, 171, seedThreshold, cropSize, overlapLimit, maxClusters);
   std::vector<std::vector<Eigen::MatrixXf>>& X = result.X; // (N, maxClusters, cropSize, cropSize)
   std::vector<std::vector<Eigen::MatrixXf>>& indices = result.indices; // (N, maxClusters, 2)
 
@@ -564,7 +582,7 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
               int row = (center_iphi + dr - 1 + (361 - 1)) % (361 - 1) + 1; // wrap around iphi
               for (int dc = -half; dc <= half; ++dc) {
                   int col = center_ieta + dc;
-                  if (col < 0 || col >= 170)
+                  if (col < 0 || col >= 171)
                       window(dr + half, dc + half) = -1; // out of bounds in ieta
                   else
                       window(dr + half, dc + half) = dead_grid[row][col];
@@ -587,7 +605,7 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     int ni=0;
   };
   std::map<int, FineAcc> fineAcc;
-  for (const auto& hit : theEBCaloHits) {
+  for (const auto& hit : EBSimHit) {
     if (hit.time() > 500.) continue;
     FineAcc& a = fineAcc[hit.geantTrackId()];
     a.ei += hit.energy();
@@ -653,6 +671,61 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     fineParentId.push_back(parentId);
     fineAncestorId.push_back(ancestorId);
   }
+
+  // ---- Merge fine tracks that land in the same crystal ----
+  // key: (ieta_bin, iphi_bin), value: surviving trackId
+  std::map<std::pair<int,int>, int> binToSurvivor;
+  // old trackId -> surviving trackId
+  std::map<int, int> mergedTrackId;
+
+  struct MergedTrack {
+    float ei=0.f, entIEta=0.f, entIPhi=0.f;
+    int ni=0;
+  };
+  std::map<int, MergedTrack> mergedTracks; // keyed by surviving trackId
+
+  for (const auto& [tkId, acc] : fineAcc) {
+    const SimTrack* tk = tkById.count((unsigned)tkId) ? tkById[(unsigned)tkId] : nullptr;
+    if (!tk || !tk->crossedBoundary()) {
+      mergedTrackId[tkId] = tkId;
+      mergedTracks[tkId].ei += acc.ei;
+      mergedTracks[tkId].ni += acc.ni;
+      continue;
+    }
+
+    // recompute entIEta/entIPhi (same logic as before)
+    const auto& pB = tk->getPositionAtBoundary();
+    float hitEta = pB.eta(), hitPhi = pB.phi();
+    float entIEta = -999.f, entIPhi = -999.f;
+
+    if (std::abs(hitEta) < 1.479) {
+      GlobalPoint gp(pB.x(), pB.y(), pB.z());
+      EBDetId ebid(barrelGeom_->getClosestCell(gp));
+      auto cell = barrelGeom_->getGeometry(ebid);
+      float dEta = hitEta - cell->etaPos();
+      float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
+      entIEta = ebid.ieta() + dEta / cell->etaSpan() + 0.5f;
+      entIPhi = ebid.iphi() + dPhi / cell->phiSpan() + 0.5f;
+    }
+
+    auto bin = std::make_pair((int)std::floor(entIEta), (int)std::floor(entIPhi));
+    if (binToSurvivor.count(bin)) {
+      // merge into survivor
+      int survivor = binToSurvivor[bin];
+      mergedTrackId[tkId] = survivor;
+      mergedTracks[survivor].ei += acc.ei;
+      mergedTracks[survivor].ni += acc.ni;
+      mergedTracks[survivor].entIEta = (mergedTracks[survivor].entIEta * (mergedTracks[survivor].ni - acc.ni) + entIEta * acc.ni) / mergedTracks[survivor].ni;
+      mergedTracks[survivor].entIPhi = (mergedTracks[survivor].entIPhi * (mergedTracks[survivor].ni - acc.ni) + entIPhi * acc.ni) / mergedTracks[survivor].ni;
+    } else {
+      binToSurvivor[bin] = tkId;
+      mergedTrackId[tkId] = tkId;
+      mergedTracks[tkId].ei = acc.ei;
+      mergedTracks[tkId].ni = acc.ni;
+      mergedTracks[tkId].entIEta = entIEta;
+      mergedTracks[tkId].entIPhi = entIPhi;
+    }
+  }
   // ---- Fine-calo hits_and_fractions analog ----
   // Two-pass: first accumulate total energy per cell,
   // then compute per-(cell,track) fraction exactly like SimCluster::hits_and_fractions().
@@ -660,12 +733,13 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
   std::map<std::pair<int,int>, float> cellTotalE;
   std::map<std::pair<std::pair<int,int>, int>, float> cellTrackE; // ((ieta,iphi), trackId) -> E
 
-  for (const auto& hit : theEBCaloHits) {
+  for (const auto& hit : EBSimHit) {
       if (hit.time() > 500.) continue;
       EBDetId ebid(hit.id());
       auto cell = std::make_pair(ebid.ieta(), ebid.iphi());
       cellTotalE[cell] += hit.energy();
-      cellTrackE[{cell, hit.geantTrackId()}] += hit.energy();
+      //cellTrackE[{cell, hit.geantTrackId()}] += hit.energy();
+      cellTrackE[{cell, mergedTrackId.count(hit.geantTrackId()) ? mergedTrackId.at(hit.geantTrackId()) : hit.geantTrackId()}] += hit.energy();
   }
 
   for (const auto& [key, ei] : cellTrackE) {
@@ -746,8 +820,8 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
       for (int k = 0; k < maxClusters; ++k) {
           float center_ieta = static_cast<float>(indices[n][k](0,0));
           float center_iphi = static_cast<float>(indices[n][k](1,0));
-          float val = center_iphi + 170.0f * center_ieta;
-          if (val == -171.0f)  // corresponds to (-1, -1)
+          float val = center_iphi + 171.0f * center_ieta;
+          if (val == -172.0f)  // corresponds to (-1, -1)
               val = 0.0f;
           abs_pos[n][k] = val;
       }
@@ -852,11 +926,11 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     }
     
     // print the truth
-    for (size_t i = 0; i < genPDG.size(); ++i) {
-      std::cout << "GenParticle " << i << ": PDG=" << genPDG[i] 
+    for (size_t i = 0; i < genE.size(); ++i) {
+      std::cout << "GenParticle " << i
                 << ", E=" << genE[i] 
-                << ", eta=" << genEta[i] + 85 
-                << ", phi=" << genPhi[i] 
+                << ", eta=" << genIEta[i] + 85 
+                << ", phi=" << genIPhi[i] 
                 << ", isConverted=" << genIsConverted[i] 
                 << ", convR=" << genConvR[i] 
                 << ", convZ=" << genConvZ[i] 
@@ -891,6 +965,8 @@ void MLClustering::clearEventData() {
   simMapAncestor.clear();
 
   recoEvent.clear(); recoIEta.clear(); recoIPhi.clear(); recoValues.clear();
+  recoMapEvent.clear(); recoMapIEta.clear(); recoMapIPhi.clear(); recoMapValues.clear();
+  recoMapFraction.clear(); recoMapAncestor.clear();
 
   genE.clear(); genPPt.clear(); genPPhi.clear(); genPEta.clear();
   genIEta.clear(); genIPhi.clear(); genEtaF.clear(); genPhiF.clear();
@@ -969,6 +1045,9 @@ void MLClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::Even
       }
     }  // end loop iphi
   }  // end loop ieta
+}
+
+void MLClustering::beginJob() {
 
   edm::Service<TFileService> fs;
 
@@ -989,10 +1068,16 @@ void MLClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::Even
   simTree->Branch("mapAncestor", &simMapAncestor);
 
   recoTree = fs->make<TTree>("recoTree", "A tree with reconstructed hit information");
-  recoTree->Branch("event",     &recoEvent);
-  recoTree->Branch("mapIEta",   &recoIEta);
-  recoTree->Branch("mapIPhi",   &recoIPhi);
-  recoTree->Branch("mapValues", &recoValues);
+  recoTree->Branch("event",  &recoEvent);
+  recoTree->Branch("ieta",   &recoIEta);
+  recoTree->Branch("iphi",   &recoIPhi);
+  recoTree->Branch("energy", &recoValues);
+  recoTree->Branch("mapEvent",    &recoMapEvent);
+  recoTree->Branch("mapIEta",     &recoMapIEta);
+  recoTree->Branch("mapIPhi",     &recoMapIPhi);
+  recoTree->Branch("mapValues",   &recoMapValues);
+  recoTree->Branch("mapFraction", &recoMapFraction);
+  recoTree->Branch("mapAncestor", &recoMapAncestor);
 
   genTree = fs->make<TTree>("genTree", "A tree with gen information");
   genTree->Branch("energy",      &genE);

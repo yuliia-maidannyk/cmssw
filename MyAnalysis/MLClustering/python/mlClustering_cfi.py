@@ -8,11 +8,11 @@ mlClustering = DQMEDAnalyzer("MLClustering",
     onnxIntraOpThreads          = cms.untracked.int32(4),
     onnxInterOpThreads          = cms.untracked.int32(1),
     moduleLabelG4               = cms.string('g4SimHits'),
-    EBHitsCollection            = cms.string('EcalHitsEB'),
+    EBSimHitCollection          = cms.string('EcalHitsEB'),
     genParticles                = cms.InputTag("genParticles"),
     simTrackCollection          = cms.InputTag("g4SimHits"),
     simVertexCollection         = cms.InputTag("g4SimHits"),
-    EBrechitCollection          = cms.InputTag("ecalRecHit","EcalRecHitsEB"),
+    EBRecHitCollection          = cms.InputTag("ecalRecHit","EcalRecHitsEB"),
     CaloParticleCollection      = cms.InputTag("mix", "MergedCaloTruth"),
     jobId                       = cms.string('NOJOBID'),
     particleFlowClusterECAL     = cms.InputTag("particleFlowClusterECAL"),
@@ -20,7 +20,7 @@ mlClustering = DQMEDAnalyzer("MLClustering",
     cropSize                    = cms.int32(7),
     maxClusters                 = cms.int32(20),
     overlapLimit                = cms.int32(7),
-    seedThreshold               = cms.double(0.54)
+    seedThreshold               = cms.double(0.66)
 )
 
 
