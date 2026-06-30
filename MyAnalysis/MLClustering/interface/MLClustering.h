@@ -104,6 +104,7 @@ private:
   edm::EDGetTokenT<edm::PCaloHitContainer> EBSimHitToken;
   edm::EDGetTokenT<reco::GenParticleCollection> genParticleToken;
   edm::EDGetTokenT<reco::PFClusterCollection> pfClusterToken;
+  edm::EDGetTokenT<reco::PFClusterCollection> mlpfClusterToken;
   edm::EDGetTokenT<edm::SimTrackContainer> SimTrackToken;
   edm::EDGetTokenT<edm::SimVertexContainer> SimVertexToken;
   edm::EDGetTokenT<EBRecHitCollection> EBRecHitToken;
@@ -165,13 +166,10 @@ private:
   std::vector<float>  pfEta;
   std::vector<double> pfE;
 
-  std::vector<int>   mlEvent;
-  std::vector<int>   mlN;        // which sample (0..numClusters-1)
-  std::vector<int>   mlK;        // which cluster slot (0..maxClusters-1)
-  std::vector<float> mlCenterX;
-  std::vector<float> mlCenterY;
-  std::vector<float> mlEnergy;
-  std::vector<float> mlSeed;
+  std::vector<int>    mlEvent;
+  std::vector<float>  mlPhi;
+  std::vector<float>  mlEta;
+  std::vector<double> mlE;
 
   std::vector<int>   fineEvent, fineTrackId, finePDG, fineNHits;
   std::vector<float> fineE;

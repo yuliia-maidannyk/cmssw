@@ -8,43 +8,7 @@
 
 #include <fstream>
 
-#define INFER 1
-#define PRINT_DEBUG 1
-
-std::vector<float> build_energy_map(
-    const std::vector<int>&   ieta_vec,
-    const std::vector<int>&   iphi_vec,
-    const std::vector<float>& energy_vec)
-{
-    std::vector<float> map(361 * 171, 0.f);
-    for (size_t i = 0; i < ieta_vec.size(); ++i) {
-        int col = ieta_vec[i] + 85; // shift ieta from [-85, 85] to [0, 170]
-        int row = iphi_vec[i];  // iphi → [1,360]
-        if (row < 0 || row >= 361) continue;
-        if (col < 0 || col >= 171) continue;
-        map[row * 171 + col] += energy_vec[i];
-    }
-    return map;
-}
-
-void apply_blackout(
-    std::vector<float>&       map,
-    const std::vector<int>&   seed_iphi,
-    const std::vector<int>&   seed_ieta,
-    const std::vector<bool>&  is_converted)
-{
-    const int pad = 30; // blackout pad size in ieta and iphi
-    for (size_t j = 0; j < is_converted.size(); ++j) {
-        if (!is_converted[j]) continue; // continue if it has not been converted
-        int r0 = std::max(0, seed_iphi[j] - pad);
-        int r1 = std::min(361, seed_iphi[j] + pad);
-        int c0 = std::max(0, seed_ieta[j] - pad);
-        int c1 = std::min(171, seed_ieta[j] + pad);
-        for (int r = r0; r < r1; ++r)
-            for (int c = c0; c < c1; ++c)
-                map[r * 171 + c] = 0.f;
-    }
-}
+#define PRINT_DEBUG 0
 
 // ------------ constructor and destructor --------------
 MLClustering::MLClustering(const edm::ParameterSet& iConfig)
@@ -79,7 +43,8 @@ MLClustering::MLClustering(const edm::ParameterSet& iConfig)
   genParticleToken = consumes<reco::GenParticleCollection>(iConfig.getParameter<edm::InputTag>("genParticles"));
   SimTrackToken = consumes<edm::SimTrackContainer>(iConfig.getParameter<edm::InputTag>("simTrackCollection"));
   SimVertexToken = consumes<edm::SimVertexContainer>(iConfig.getParameter<edm::InputTag>("simVertexCollection"));
-  pfClusterToken = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECAL"));
+  pfClusterToken   = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECAL"));
+  mlpfClusterToken = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECALML"));
   ecalGeomToken = esConsumes<CaloGeometry, CaloGeometryRecord, edm::Transition::BeginRun>();
   ecalStatusToken = esConsumes<EcalChannelStatus, EcalChannelStatusRcd, edm::Transition::BeginRun>();
   magFieldToken = esConsumes<MagneticField, IdealMagneticFieldRecord>();
@@ -101,30 +66,6 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     std::cout << "Processed " << eventCount << " events" << std::endl;
   }
 
-#if INFER
-  std::vector<std::vector<int>> dead_grid(361, std::vector<int>(171, 1)); // default = 1
-
-  for (const auto& [detid, bitVec] : EcalAllDeadChannelsBitMap_) {
-      int ieta = bitVec[1];
-      int iphi = bitVec[2];
-      int status = bitVec[3];
-
-      int ieta_shifted = ieta + 85; // shift ieta from [-85, 85] to [0, 170]
-      int iphi_shifted = iphi; // [1, 360]
-
-      if (iphi_shifted < 0 || iphi_shifted >= 361) continue;
-      if (ieta_shifted < 0 || ieta_shifted >= 171) continue;
-
-      int val = 1; // ok
-      if (status >= 3 && status <= 10)
-          val = 2; // noisy/wrong gain
-      else if (status > 10)
-          val = 3; // completely dead
-
-      dead_grid[iphi_shifted][ieta_shifted] = val;
-  }
-#endif
-
   // ***************** Get the collections *****************
 
   edm::Handle<edm::PCaloHitContainer> EBSimHitHandle;
@@ -145,6 +86,9 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
 
   edm::Handle<reco::PFClusterCollection> pfClusters;
   iEvent.getByToken(pfClusterToken, pfClusters);
+
+  edm::Handle<reco::PFClusterCollection> mlpfClusters;
+  iEvent.getByToken(mlpfClusterToken, mlpfClusters);
 
   const MagneticField* magField_ = &iSetup.getData(magFieldToken);
 
@@ -351,17 +295,6 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
           iphi_f = -999.0f; // invalid value
         }
       }
-#if INFER
-      seed_isConverted.push_back(static_cast<bool>(isConverted));
-      seed_ieta.push_back(ieta + 85);
-      float iphi_shifted = iphi * (180.0 / M_PI);   // (-180, +180) degrees
-      iphi_shifted = std::fmod(iphi + 10.0, 360.0); // apply offset, wrap to [0, 360)
-      iphi_shifted = iphi + 1.0;                    // 1-based index [1, 360]
-      seed_iphi.push_back(iphi_shifted);
-#endif
-      if (PRINT_DEBUG) {
-        std::cout << "  GenParticle momentum points to: ieta=" << ieta << " iphi=" << iphi << std::endl;
-      }
       genEvent.push_back(iEvent.id().event());
       genTrackId.push_back(bestTrackId);
       genPEta.push_back(eta);
@@ -530,69 +463,6 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     recoValues.push_back(ei);
     recoEvent.push_back(iEvent.id().event());
   }
-
-#if INFER
-  std::vector<float> map = build_energy_map(ieta_vec, iphi_vec, energy_vec);
-  apply_blackout(map, seed_iphi, seed_ieta, seed_isConverted);
-
-  std::cout << "Map size: " << map.size() << " (should be 61370 for 361x171)" << std::endl;
-  std::cout << "Crop Size: " << cropSize << std::endl;
-  std::cout << "Seed Threshold: " << seedThreshold << std::endl;
-  std::cout << "Overlap Limit: " << overlapLimit << std::endl;
-  std::cout << "Max Clusters: " << maxClusters << std::endl;
-
-  auto result = get_model_samples(map, 361, 171, seedThreshold, cropSize, overlapLimit, maxClusters);
-  std::vector<std::vector<Eigen::MatrixXf>>& X = result.X; // (N, maxClusters, cropSize, cropSize)
-  std::vector<std::vector<Eigen::MatrixXf>>& indices = result.indices; // (N, maxClusters, 2)
-
-  // print X and indices shapes
-  std::cout << "X shape: (" << X.size() << ", " << (X.empty() ? 0 : X[0].size()) << ", " 
-            << (X.empty() || X[0].empty() ? 0 : X[0][0].rows()) << ", " 
-            << (X.empty() || X[0].empty() ? 0 : X[0][0].cols()) << ")" << std::endl;
-  std::cout << "Indices shape: (" << indices.size() << ", " << (indices.empty() ? 0 : indices[0].size()) << ", 2)" << std::endl;
-
-  // print each cluster
-  // for (size_t i = 0; i < X.size(); ++i) {
-  //       std::cout << "Sample " << i << ":\n";
-  //       for (size_t j = 0; j < X[i].size(); ++j) {
-  //           std::cout << "  Cluster " << j << ":\n";
-  //           std::cout << X[i][j] << "\n";
-  //       }
-  //   }
-
-  int half = cropSize / 2;
-  std::vector<std::vector<Eigen::MatrixXi>> dead_masks; // (N, maxClusters, cropSize, cropSize)
-
-  for (const auto& event : indices) { // loop over N clusters
-      std::vector<Eigen::MatrixXi> event_masks;
-
-      for (const auto& idx : event) { // loop over maxClusters per cluster
-          int center_iphi = static_cast<int>(idx(0,0));
-          int center_ieta = static_cast<int>(idx(1,0));
-
-          // padding case
-          if (center_ieta == -1 && center_iphi == -1) {
-              event_masks.push_back(Eigen::MatrixXi::Constant(cropSize, cropSize, -1));
-              continue;
-          }
-
-          Eigen::MatrixXi window(cropSize, cropSize);
-
-          for (int dr = -half; dr <= half; ++dr) {
-              int row = (center_iphi + dr - 1 + (361 - 1)) % (361 - 1) + 1; // wrap around iphi
-              for (int dc = -half; dc <= half; ++dc) {
-                  int col = center_ieta + dc;
-                  if (col < 0 || col >= 171)
-                      window(dr + half, dc + half) = -1; // out of bounds in ieta
-                  else
-                      window(dr + half, dc + half) = dead_grid[row][col];
-              }
-          }
-          event_masks.push_back(std::move(window));
-      }
-      dead_masks.push_back(std::move(event_masks));
-  }
-#endif
 
   // ************** Fine-calo: EB PCaloHits grouped by boundary-crossing track **************
   // trackId -> SimTrack* lookup (boundary vars live on the full SimTrackContainer)
@@ -763,7 +633,7 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
       fineMapAncestor.push_back(ancestorId);
   }
 
-  // **************** Loop over the PFClusters ****************
+  // ***************** Loop over the PFClusters ****************
 
   for (const auto& pf : *pfClusters)
   {
@@ -792,165 +662,45 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     pfEta.push_back(ieta_f);
     pfPhi.push_back(iphi_f);
 
-    if (PRINT_DEBUG) {std::cout << " PFCluster E=" << corr_E << " at (" << ieta << ", " << iphi << ")" << std::endl;}
+    if (PRINT_DEBUG) {std::cout << " PFCluster E=" << corr_E << " at (" << ieta << ", " << iphi << ")" 
+      << " with eta_f=" << ieta_f << ", phi_f=" << iphi_f << std::endl;}
   }
 
-#if INFER
+  // ***************** Loop over the MLPFClusters ****************
 
-  data_.clear();
-  int numClusters = X.size();
-  data_.emplace_back(numClusters * cropSize * cropSize * maxClusters, 0.f); // inp1
-  data_.emplace_back(numClusters * maxClusters * 2, 0.f); // inp2
-  data_.emplace_back(numClusters * maxClusters, 0.f); // inp3
-  data_.emplace_back(numClusters * cropSize * cropSize * maxClusters, 0.f); // inp4
+  for (const auto& pf : *mlpfClusters)
+  {
+    if (pf.layer() != PFLayer::ECAL_BARREL) continue;
+    mlEvent.push_back(iEvent.id().event());
+    float corr_E = static_cast<float>(pf.correctedEnergy());
+    mlE.push_back(corr_E);
 
-  input_shapes_ = {
-    {numClusters, cropSize, cropSize, maxClusters}, // inp1
-    {numClusters, maxClusters, 2},                  // inp2
-    {numClusters, maxClusters},                     // inp3
-    {numClusters, cropSize, cropSize, maxClusters}  // inp4
-  };
+    math::XYZPoint pfPos = pf.position();
+    GlobalPoint gp(pfPos.x(), pfPos.y(), pfPos.z());
+    DetId closestCell = barrelGeom_->getClosestCell(gp);
+    EBDetId ebid(closestCell);
+    int ieta = ebid.ieta();
+    int iphi = ebid.iphi();
 
-  if (PRINT_DEBUG) {
-    std::cout << "Number of clusters to run through the model: " << numClusters << std::endl;
+    float hitEta = pf.positionREP().Eta();
+    float hitPhi = pf.positionREP().Phi();
+
+    const CaloCellGeometry* cell = barrelGeom_->getGeometry(ebid);
+
+    float dEta = hitEta - cell->etaPos();
+    float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
+    float ieta_f = ieta + dEta / cell->etaSpan() + 0.5f;
+    float iphi_f = iphi + dPhi / cell->phiSpan() + 0.5f;
+
+    mlEta.push_back(ieta_f);
+    mlPhi.push_back(iphi_f);
+
+    if (PRINT_DEBUG) {std::cout << " MLPFCluster E=" << corr_E << " at (" << ieta << ", " << iphi << ")" 
+      << " with eta_f=" << ieta_f << ", phi_f=" << iphi_f << std::endl;}
   }
 
-  std::vector<std::vector<float>> abs_pos(numClusters, std::vector<float>(maxClusters, 0.0f)); // 1D flattened absolute positions
-  for (int n = 0; n < numClusters; ++n) {
-      for (int k = 0; k < maxClusters; ++k) {
-          float center_ieta = static_cast<float>(indices[n][k](0,0));
-          float center_iphi = static_cast<float>(indices[n][k](1,0));
-          float val = center_iphi + 171.0f * center_ieta;
-          if (val == -172.0f)  // corresponds to (-1, -1)
-              val = 0.0f;
-          abs_pos[n][k] = val;
-      }
-  }
-
-  int r_eff = (cropSize + overlapLimit) - 1;
-
-  // Position relative to the center of the effective window
-  std::vector<std::vector<std::array<float, 2>>> rel_pos(
-      numClusters, std::vector<std::array<float, 2>>(maxClusters));
-  // Initialize with -1
-  for (int n = 0; n < numClusters; ++n) {
-      for (int i = 0; i < maxClusters; ++i) {
-          rel_pos[n][i][0] = -1.0f;
-          rel_pos[n][i][1] = -1.0f;
-      }
-  }
-  for (int n = 0; n < numClusters; ++n) {
-      int center_ieta = static_cast<int>(indices[n][0](0,0)); // Highest Edep
-      int center_iphi = static_cast<int>(indices[n][0](1,0)); // Highest Edep
-      for (int k = 0; k < maxClusters; ++k) {
-          int ieta = static_cast<int>(indices[n][k](0,0));
-          int iphi = static_cast<int>(indices[n][k](1,0));
-          if (ieta > -1) {rel_pos[n][k][0] = float(ieta - center_ieta) / float(r_eff);}
-          if (iphi > -1) {rel_pos[n][k][1] = float(iphi - center_iphi) / float(r_eff);}
-      }
-  }
-
-  auto idx4 = [this](int n, int r, int c, int k) {
-    return ((n * cropSize + r) * cropSize + c) * maxClusters + k;
-  };
-  auto idx2 = [this](int n, int k, int d) {
-    return (n * maxClusters + k) * 2 + d;
-  };
-  auto idx1 = [this](int n, int k) {
-    return n * maxClusters + k;
-  };
-
-  // Fill from X, rel_pos, abs_pos, dead_masks
-  for (int n = 0; n < numClusters; ++n) {
-    for (int k = 0; k < maxClusters; ++k) {
-      // inp2 from rel_pos
-      data_[1][idx2(n, k, 0)] = rel_pos[n][k][0];
-      data_[1][idx2(n, k, 1)] = rel_pos[n][k][1];
-
-      // inp3 from abs_pos (now float model)
-      data_[2][idx1(n, k)] = abs_pos[n][k];
-
-      // inp1 from X, inp4 from dead_masks
-      const Eigen::MatrixXf& xk = X[n][k];
-      const Eigen::MatrixXi& mk = dead_masks[n][k];
-
-      for (int r = 0; r < cropSize; ++r) {
-        for (int c = 0; c < cropSize; ++c) {
-          data_[0][idx4(n, r, c, k)] = xk(r, c);
-          data_[3][idx4(n, r, c, k)] = static_cast<float>(mk(r, c));
-        }
-      }
-    }
-  }
-
-  // --- run inference ---
-  std::vector<std::vector<float>> outputs = onnx_->run(input_names_, data_, input_shapes_, {}, numClusters);
-
-  // convert 
-  std::vector<float> &center_pr = outputs[0]; // shape (batch, 20, 2)
-  std::vector<float> &energy_pr = outputs[1]; // shape (batch, 20, 1)
-  std::vector<float> &seed_pr   = outputs[2]; // shape (batch, 20, 1)
-
-  std::vector<std::vector<std::pair<float, float>>> centers(numClusters, std::vector<std::pair<float, float>>(maxClusters));
-  std::vector<std::vector<float>> energies(numClusters, std::vector<float>(maxClusters));
-  std::vector<std::vector<float>> seeds(numClusters, std::vector<float>(maxClusters));
-
-  auto idx_center = [this](int n, int i, int d) {
-      return static_cast<size_t>(n) * this->maxClusters * 2 + i * 2 + d;
-  };
-
-  auto idx_scalar = [this](int n, int i) {
-      return static_cast<size_t>(n) * this->maxClusters + i;
-  };
-
-  for (int n = 0; n < numClusters; ++n) {
-      for (int i = 0; i < maxClusters; ++i) {
-          float cx = center_pr[idx_center(n, i, 0)];
-          float cy = center_pr[idx_center(n, i, 1)];
-
-          centers[n][i] = {
-              cx + indices[n][i](0, 0) - cropSize / 2.0f,
-              cy + indices[n][i](1, 0) - cropSize / 2.0f
-          };
-
-          energies[n][i] = energy_pr[idx_scalar(n, i)] * 100.0f;
-          seeds[n][i]    = seed_pr[idx_scalar(n, i)];
-      }
-  }
-
-  if (PRINT_DEBUG) {
-    for (int i = 0; i < maxClusters; i++) {
-      std::cout << "Energy[" << i << "] = " << energies[0][i] << std::endl;
-      std::cout << "Seed[" << i << "] = " << seeds[0][i] << std::endl;
-      std::cout << "Center[" << i << "] = (" << centers[0][i].first << ", " << centers[0][i].second << ")" << std::endl;
-    }
-    
-    // print the truth
-    for (size_t i = 0; i < genE.size(); ++i) {
-      std::cout << "GenParticle " << i
-                << ", E=" << genE[i] 
-                << ", eta=" << genIEta[i] + 85 
-                << ", phi=" << genIPhi[i] 
-                << ", isConverted=" << genIsConverted[i] 
-                << ", convR=" << genConvR[i] 
-                << ", convZ=" << genConvZ[i] 
-                << std::endl;
-    }
-  }
-  // Store
-  for (int n = 0; n < numClusters; n++) {
-    for (int i = 0; i < maxClusters; i++) {
-        mlEvent.push_back(iEvent.id().event());
-        mlN.push_back(n);
-        mlK.push_back(i);
-        mlCenterX.push_back(centers[n][i].first);
-        mlCenterY.push_back(centers[n][i].second);
-        mlEnergy.push_back(energies[n][i]);
-        mlSeed.push_back(seeds[n][i]);
-    }
-  }
+  // **************** Fill all trees ****************
   mlTree->Fill();
-#endif
   simTree->Fill();
   recoTree->Fill();
   genTree->Fill();
@@ -973,6 +723,7 @@ void MLClustering::clearEventData() {
   genTrackId.clear(); genEvent.clear(); genIsConverted.clear(); genConvR.clear(); genConvZ.clear();
 
   pfEvent.clear(); pfPhi.clear(); pfEta.clear(); pfE.clear();
+  mlEvent.clear(); mlPhi.clear(); mlEta.clear(); mlE.clear();
 
   fineEvent.clear(); fineTrackId.clear(); finePDG.clear(); fineNHits.clear();
   fineE.clear(); fineInitialE.clear(); fineInitialEta.clear(); fineInitialPhi.clear();
@@ -982,16 +733,6 @@ void MLClustering::clearEventData() {
   fineParentId.clear(); fineAncestorId.clear(); fineGenIdx.clear();
   fineMapEvent.clear(); fineMapIEta.clear(); fineMapIPhi.clear(); fineMapTrackId.clear();
   fineMapEnergy.clear(); fineMapFraction.clear(); fineMapAncestor.clear();
-
-#if INFER
-  mlEvent.clear();
-  mlN.clear();
-  mlK.clear();
-  mlCenterX.clear();
-  mlCenterY.clear();
-  mlEnergy.clear();
-  mlSeed.clear();
-#endif
 }
 
 // ------------ helper method for photon conversion tracking ------------
@@ -1015,36 +756,6 @@ void MLClustering::bookHistograms(DQMStore::IBooker&, edm::Run const&, edm::Even
   // Get barrel subgeometry from it - no separate token needed
   // const CaloSubdetectorGeometry* barrelGeom_ = geo.getSubdetectorGeometry(DetId::Ecal, EcalBarrel);
   barrelGeom_ = dynamic_cast<const EcalBarrelGeometry*>(geo.getSubdetectorGeometry(DetId::Ecal, EcalBarrel));
-
-  edm::ESHandle<EcalChannelStatus> ecalStatus;
-  ecalStatus = iSetup.getHandle(ecalStatusToken);
-
-  // XXX: All the following can be built at the beginning of a job
-  // Store EB: DetId <==> vector<int> (subdet, ieta, iphi, status)
-  EcalAllDeadChannelsBitMap_.clear();
-
-  // Loop over EB ...
-  for (int ieta = -85; ieta <= 85; ieta++) {
-    for (int iphi = 0; iphi <= 360; iphi++) {
-      if (!EBDetId::validDetId(ieta, iphi))
-        continue;
-
-      const EBDetId detid = EBDetId(ieta, iphi, EBDetId::ETAPHIMODE);
-      EcalChannelStatus::const_iterator chit = ecalStatus->find(detid);
-      // refer https://twiki.cern.ch/twiki/bin/viewauth/CMS/EcalChannelStatus
-      int status = (chit != ecalStatus->end()) ? chit->getStatusCode() & 0x1F : -1;
-
-      if (status >= maskedEcalChannelStatusThreshold) {
-        // std::cout << "Masked EB channel: ieta=" << ieta << ", iphi=" << iphi << ", status=" << status << std::endl;
-        std::vector<int> bitVec;
-        bitVec.push_back(1);
-        bitVec.push_back(ieta);
-        bitVec.push_back(iphi);
-        bitVec.push_back(status);
-        EcalAllDeadChannelsBitMap_.insert(std::make_pair(detid, bitVec));
-      }
-    }  // end loop iphi
-  }  // end loop ieta
 }
 
 void MLClustering::beginJob() {
@@ -1100,6 +811,12 @@ void MLClustering::beginJob() {
   pfTree->Branch("phi",    &pfPhi);
   pfTree->Branch("event",  &pfEvent);
 
+  mlTree = fs->make<TTree>("mlTree", "A tree with MLPFCluster information");
+  mlTree->Branch("energy", &mlE);
+  mlTree->Branch("eta",    &mlEta);
+  mlTree->Branch("phi",    &mlPhi);
+  mlTree->Branch("event",  &mlEvent);
+
   fineTree = fs->make<TTree>("fineTree", "One row per fine-calo track depositing in EB");
   fineTree->Branch("event",           &fineEvent);
   fineTree->Branch("trackId",         &fineTrackId);
@@ -1126,17 +843,6 @@ void MLClustering::beginJob() {
   fineTree->Branch("mapEnergy",      &fineMapEnergy);
   fineTree->Branch("mapFraction",    &fineMapFraction);
   fineTree->Branch("mapAncestor",    &fineMapAncestor);
-
-#if INFER
-  mlTree = fs->make<TTree>("mlTree", "ML inference output");
-  mlTree->Branch("event",   &mlEvent);
-  mlTree->Branch("n",       &mlN);
-  mlTree->Branch("k",       &mlK);
-  mlTree->Branch("centerX", &mlCenterX);
-  mlTree->Branch("centerY", &mlCenterY);
-  mlTree->Branch("energy",  &mlEnergy);
-  mlTree->Branch("seed",    &mlSeed);
-#endif
 }
 
 DEFINE_FWK_MODULE(MLClustering);
