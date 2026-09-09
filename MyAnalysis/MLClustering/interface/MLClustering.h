@@ -48,7 +48,6 @@
 #include "CondFormats/DataRecord/interface/EcalChannelStatusRcd.h"
 
 #include "FWCore/Framework/interface/one/EDAnalyzer.h"
-#include "PhysicsTools/ONNXRuntime/interface/ONNXRuntime.h"
 
 #include "TrackingTools/TrajectoryParametrization/interface/GlobalTrajectoryParameters.h"
 #include "TrackPropagation/SteppingHelixPropagator/interface/SteppingHelixPropagator.h"
@@ -61,8 +60,6 @@
 #include <TFile.h>
 #include <TTree.h>
 #include <string>
-
-using namespace cms::Ort;
 
 class MLClustering : public DQMOneEDAnalyzer<> {
 
@@ -82,20 +79,11 @@ protected:
   void clearEventData();
 
 private:
-  std::vector<std::string> input_names_;
-  std::vector<std::vector<int64_t>> input_shapes_;
-  FloatArrays data_;
-  std::unique_ptr<ONNXRuntime> onnx_;
 
   std::string g4InfoLabel;
   std::string EBSimHitCollection;
   std::string jobId;
   int maskedEcalChannelStatusThreshold;
-
-  int cropSize;
-  int maxClusters;
-  int overlapLimit;
-  double seedThreshold;
 
   const EcalBarrelGeometry* barrelGeom_ = nullptr;
   // Store EB: DetId <==> vector<int> (subdet, ieta, iphi, status)
@@ -112,6 +100,7 @@ private:
   edm::ESGetToken<CaloGeometry, CaloGeometryRecord> ecalGeomToken;
   edm::ESGetToken<EcalChannelStatus, EcalChannelStatusRcd> ecalStatusToken;
   edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> magFieldToken;
+//   edm::EDGetTokenT<EBRecHitCollection> EBRecHitNoZSToken;
 
   TTree* simTree;
   TTree* recoTree;
@@ -120,6 +109,8 @@ private:
   TTree* mlTree;
   TTree* fineTree;
   TTree* fineMapTree;
+  TTree* photonHitTree;
+//   TTree* noiseTree;
 
   std::vector<int>      simPDG;
   std::vector<float>    simT;
@@ -147,6 +138,11 @@ private:
   std::vector<float>    recoMapFraction;
   std::vector<int>      recoMapAncestor;
 
+//   std::vector<int>      noiseEvent;
+//   std::vector<int>      noiseIEta;
+//   std::vector<int>      noiseIPhi;
+//   std::vector<float>    noiseValues;
+
   std::vector<float>    genE;
   std::vector<float>    genPPt;
   std::vector<float>    genPPhi;
@@ -165,11 +161,18 @@ private:
   std::vector<float>  pfPhi;
   std::vector<float>  pfEta;
   std::vector<double> pfE;
+  std::vector<double> pfRawE;
 
   std::vector<int>    mlEvent;
   std::vector<float>  mlPhi;
   std::vector<float>  mlEta;
   std::vector<double> mlE;
+
+//   std::vector<int>    pfMapEvent;
+//   std::vector<int>    pfMapIEta;
+//   std::vector<int>    pfMapIPhi;
+//   std::vector<double> pfMapEnergy;
+//   std::vector<float>  pfMapFraction;
 
   std::vector<int>   fineEvent, fineTrackId, finePDG, fineNHits;
   std::vector<float> fineE;
@@ -187,6 +190,23 @@ private:
   std::vector<int>      fineMapAncestor;
 
   std::map<unsigned, unsigned> geantToIndex_;
+
+  MonitorElement *mlGunPhi_;
+  MonitorElement *mlGunEta_;
+  MonitorElement *mlGunE_;
+  MonitorElement *mlGunN_;
+
+  MonitorElement *pfGunPhi_;
+  MonitorElement *pfGunEta_;
+  MonitorElement *pfGunE_;
+  MonitorElement *pfGunN_;
+
+  std::vector<int>   photonHitEvent;
+  std::vector<int>   photonHitGenIdx;
+  std::vector<uint64_t>   photonHitTrackId;
+  std::vector<int>   photonHitIEta, photonHitIPhi;
+  std::vector<float> photonHitEnergy;
+  std::vector<float> photonHitFraction;
 };
 
 #endif

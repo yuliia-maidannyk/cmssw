@@ -3,10 +3,6 @@ import FWCore.ParameterSet.Config as cms
 from DQMServices.Core.DQMEDAnalyzer import DQMEDAnalyzer
 
 mlClustering = DQMEDAnalyzer("MLClustering",
-    model_path                  = cms.string("MyAnalysis/MLClustering/data/clus_tex.onnx"),
-    input_names                 = cms.vstring("inp1", "inp2", "inp3", "inp4"),
-    onnxIntraOpThreads          = cms.untracked.int32(4),
-    onnxInterOpThreads          = cms.untracked.int32(1),
     moduleLabelG4               = cms.string('g4SimHits'),
     EBSimHitCollection          = cms.string('EcalHitsEB'),
     genParticles                = cms.InputTag("genParticles"),
@@ -17,11 +13,7 @@ mlClustering = DQMEDAnalyzer("MLClustering",
     jobId                       = cms.string('NOJOBID'),
     particleFlowClusterECAL     = cms.InputTag("particleFlowClusterECAL"),
     particleFlowClusterECALML   = cms.InputTag("mlPFClusterProducer"),
-    maskedEcalChannelStatusThreshold = cms.int32(1),
-    cropSize                    = cms.int32(7),
-    maxClusters                 = cms.int32(20),
-    overlapLimit                = cms.int32(7),
-    seedThreshold               = cms.double(0.66)
+    maskedEcalChannelStatusThreshold = cms.int32(1)
 )
 
 

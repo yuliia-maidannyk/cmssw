@@ -101,8 +101,6 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
     EBRecHit = EcalRecHitEB.product();
   }
 
-  //const CaloGeometry& geo = iSetup.getData(ecalGeomToken_);
-  //barrelGeom_ = dynamic_cast<const EcalBarrelGeometry*>(geo.getSubdetectorGeometry(DetId::Ecal, EcalBarrel));
   const auto& caloGeom = iSetup.getData(caloGeomToken_);
   const CaloSubdetectorGeometry* ebGeom = caloGeom.getSubdetectorGeometry(DetId::Ecal, EcalBarrel);
 
@@ -192,21 +190,6 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
         }
     }
   }
-    // const int ROWS = 361, COLS = 171;
-
-    // // Full grid: one CSV per event, rows=iphi (0..360), cols=ieta+85 (0..170)
-    // std::ostringstream fname;
-    // fname << "dump_fullX_event" << iEvent.id().event() << ".csv";
-    // std::ofstream fout(fname.str());
-    // for (int r = 0; r < ROWS; ++r) {
-    //     for (int c = 0; c < COLS; ++c) {
-    //         fout << map[r * COLS + c];
-    //         if (c != COLS - 1) fout << ",";
-    //     }
-    //     fout << "\n";
-    // }
-    // fout.close();
-    // std::cout << "DUMP: wrote " << fname.str() << std::endl;
 
   auto result = get_model_samples(map, 361, 171, seedThreshold, cropSize, overlapLimit, maxClusters);
   std::vector<std::vector<Eigen::MatrixXf>>& X = result.X; // (N, maxClusters, cropSize, cropSize)
@@ -276,16 +259,16 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
     iEvent.put(std::make_unique<reco::PFCluster::EEtoPSAssociation>(assoc));
     return;
 }
-  data_.emplace_back(numClusters * cropSize * cropSize * maxClusters, 0.f); // inp1
+  data_.emplace_back(numClusters * maxClusters * cropSize * cropSize, 0.f); // inp1
   data_.emplace_back(numClusters * maxClusters * 2, 0.f); // inp2
   data_.emplace_back(numClusters * maxClusters, 0.f); // inp3
-  data_.emplace_back(numClusters * cropSize * cropSize * maxClusters, 0.f); // inp4
+  data_.emplace_back(numClusters * maxClusters * cropSize * cropSize, 0.f); // inp4
 
   input_shapes_ = {
-    {numClusters, cropSize, cropSize, maxClusters}, // inp1
+    {numClusters, maxClusters, cropSize, cropSize}, // inp1
     {numClusters, maxClusters, 2},                  // inp2
     {numClusters, maxClusters},                     // inp3
-    {numClusters, cropSize, cropSize, maxClusters}  // inp4
+    {numClusters, maxClusters, cropSize, cropSize}  // inp4
   };
 
   if (PRINT_DEBUG) {
@@ -328,8 +311,9 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   }
 
   // Reshaping functions for input
-  auto idx4 = [this](int n, int r, int c, int k) {
-    return ((n * cropSize + r) * cropSize + c) * maxClusters + k;
+  // data_[0] and data_[3] are laid out as (N, maxClusters, cropSize, cropSize)
+  auto idx4 = [this](int n, int k, int r, int c) {
+    return ((n * maxClusters + k) * cropSize + r) * cropSize + c;
   };
   auto idx2 = [this](int n, int k, int d) {
     return (n * maxClusters + k) * 2 + d;
@@ -354,10 +338,8 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
 
       for (int r = 0; r < cropSize; ++r) {
         for (int c = 0; c < cropSize; ++c) {
-          //data_[0][idx4(n, r, c, k)] = xk(r, c);
-          data_[0][idx4(n, r, c, k)] = xk(c, r); // swap phi<->eta
-          //data_[3][idx4(n, r, c, k)] = static_cast<float>(mk(r, c));
-          data_[3][idx4(n, r, c, k)] = static_cast<float>(mk(c, r)); // swap phi<->eta
+          data_[0][idx4(n, k, r, c)] = xk(r, c);
+          data_[3][idx4(n, k, r, c)] = static_cast<float>(mk(r, c));
         }
       }
     }
