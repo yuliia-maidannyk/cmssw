@@ -181,7 +181,7 @@ void BarrelLayerClusterProducer::produce(edm::Event& evt, const edm::EventSetup&
 }
 
 void BarrelLayerClusterProducer::setAlgoId(std::string& type) {
-  if (type == "EBCLUE") {
+  if (type == "EBCLUE" or type == "ClusTEX") {
     algoId_ = reco::CaloCluster::barrel_em;
   } else if (type == "HBCLUE") {
     algoId_ = reco::CaloCluster::barrel_had;
