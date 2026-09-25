@@ -23,23 +23,34 @@
 #include "CondFormats/DataRecord/interface/HcalPFCutsRcd.h"
 #include "CondFormats/HcalObjects/interface/HcalPFCuts.h"
 
+#include "FWCore/Framework/interface/ESWatcher.h"
+#include "CondFormats/DataRecord/interface/EcalChannelStatusRcd.h"
+#include "CondFormats/EcalObjects/interface/EcalChannelStatus.h"
+#include "Geometry/CaloGeometry/interface/CaloSubdetectorGeometry.h"
+#include "DataFormats/EcalDetId/interface/EBDetId.h"
+#include "DataFormats/EcalDetId/interface/EcalSubdetector.h"
+
 // C/C++ headers
-#include <set>
+#include "PhysicsTools/ONNXRuntime/interface/ONNXRuntime.h"
+#include "RecoParticleFlow/PFClusterProducer/interface/MLPFClusterPreProcessing.h"
+#include <array>
+#include <memory>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 class BarrelClusTEXAlgo : public HGCalClusteringAlgoBase {
 public:
-  BarrelClusTEXAlgo(const edm::ParameterSet& ps)
-      : HGCalClusteringAlgoBase(
-            (HGCalClusteringAlgoBase::VerbosityLevel)ps.getUntrackedParameter<unsigned int>("verbosity", 3),
-            reco::CaloCluster::undefined),
-            doSharing_(ps.getParameter<bool>("doSharing")) {}
+  BarrelClusTEXAlgo(const edm::ParameterSet &);
   ~BarrelClusTEXAlgo() override {}
 
-  void getEventSetupPerAlgorithm(const edm::EventSetup& es) override;
+  void getEventSetupPerAlgorithm(const edm::EventSetup& iSetup) override;
+  void updateDeadChannelGrid(const edm::EventSetup& iSetup);
   void setThresholds(edm::ESGetToken<EcalPFRecHitThresholds, EcalPFRecHitThresholdsRcd>,
-                     edm::ESGetToken<HcalPFCuts, HcalPFCutsRcd>) override;
+                     edm::ESGetToken<HcalPFCuts, HcalPFCutsRcd>) override {};
+
+  void setClusTEXTokens(edm::ESGetToken<CaloGeometry, CaloGeometryRecord> caloGeomToken,
+                        edm::ESGetToken<EcalChannelStatus, EcalChannelStatusRcd> ecalStatusToken) override;
 
   void populate(const HGCRecHitCollection& hits) override {};
   void populate(const reco::PFRecHitCollection& hits) override;
@@ -51,76 +62,74 @@ public:
   void reset() override {
     clusters_v_.clear();
     clusters_v_.shrink_to_fit();
-    for (auto& cl : numberOfClustersPerLayer_) {
-      cl = 0;
-    }
-
-    for (auto& cells : cells_) {
-      cells.clear();
-      cells.shrink_to_fit();
-    }
+    predictedClusters_.clear();
+    cellsMap_.clear();
+    data_.clear();
+    inputShapes_.clear();
+    // deadChannelGrid_ is deliberately NOT cleared: the ESWatcher only
+    // refills it when the channel status changes.
   }
-
-  void computeThreshold();
 
   static void fillPSetDescription(edm::ParameterSetDescription& iDesc) {
-    iDesc.add<bool>("doSharing", true);
+    iDesc.add<std::string>("modelPath", "RecoParticleFlow/PFClusterProducer/data/clus_tex.onnx");
+    iDesc.add<std::vector<std::string>>("inputNames", {"inp1", "inp2", "inp3", "inp4"});
+    iDesc.add<int>("cropSize", 7);
+    iDesc.add<int>("maxClusters", 20);
+    iDesc.add<int>("overlapLimit", 7);
+    iDesc.add<double>("seedThreshold", 0.23);
+    iDesc.add<double>("outputThreshold", 0.3);
+    iDesc.add<int>("maskedEcalChannelStatusThreshold", 1);
+    // iDesc.add<double>("T0_EB", 7.4);
+    // iDesc.add<double>("X0", 0.89);
   }
-
-  /// point in the space
-  typedef math::XYZPoint Point;
 
 private:
-  // To get ECAL sigmaNoise
-  edm::ESGetToken<EcalPFRecHitThresholds, EcalPFRecHitThresholdsRcd> tok_ebThresholds_;
-  const EcalPFRecHitThresholds* ebThresholds_;
-  bool doSharing_;
-  const int maxClusters=100;
 
-  struct BarrelCellsOnLayer {
-    std::vector<DetId> detid;
-    std::vector<float> eta;
-    std::vector<float> phi;
-    std::vector<float> r;
+  // Helper functions
+  void killDeadChannels();
+  std::vector<std::vector<float>> get_abs_pos(const int, const std::vector<std::vector<Eigen::MatrixXf>>&);
+  std::vector<std::vector<std::array<float, 2>>> get_rel_pos(const int, const std::vector<std::vector<Eigen::MatrixXf>>&);
+  std::vector<std::vector<Eigen::MatrixXi>> get_channel_status_mask(const std::vector<std::vector<Eigen::MatrixXf>>&);
+  // End of helper functions
 
-    std::vector<float> weight;
-    std::vector<std::vector<int>> clusterIndex;
+  std::string modelPath_;
+  std::vector<std::string> inputNames_;
+  std::vector<std::vector<int64_t>> inputShapes_;
+  cms::Ort::FloatArrays data_;
+  std::unique_ptr<cms::Ort::ONNXRuntime> onnx_;
+  
+  int cropSize_;
+  int maxClusters_;
+  int overlapLimit_;
+  double seedThreshold_;
+  double outputThreshold_;
+  int maskedEcalChannelStatusThreshold_;
+  // double param_T0_EB_;
+  // double param_X0_;
 
-    void clear() {
-      detid.clear();
-      eta.clear();
-      phi.clear();
-      r.clear();
-      weight.clear();
-      clusterIndex.clear();
-    }
+  // Flat [iphi * 171 + (ieta + 85)] grid. It is invariant within an
+  // EcalChannelStatusRcd IOV, so do not reconstruct it for every event.
+  std::vector<int> deadChannelGrid_;
+  edm::ESWatcher<EcalChannelStatusRcd> ecalChannelStatusWatcher_;
+  const CaloSubdetectorGeometry* ebGeom_ = nullptr;
 
-    void shrink_to_fit() {
-      detid.shrink_to_fit();
-      r.shrink_to_fit();
-      eta.shrink_to_fit();
-      phi.shrink_to_fit();
-      weight.shrink_to_fit();
-      clusterIndex.shrink_to_fit();
-    }
+  // edm::EDGetTokenT<EBRecHitCollection> EBrechitCollection_Token_;
+  edm::ESGetToken<CaloGeometry, CaloGeometryRecord> caloGeomToken_;
+  edm::ESGetToken<EcalChannelStatus, EcalChannelStatusRcd> ecalStatusToken_;
+
+  std::vector<float> cellsMap_;
+  static constexpr int nRows = 361;          // iphi, 1..360
+  static constexpr int nCols = 171;          // ieta + 85, 0..170
+  static constexpr int etaOffset = 85;
+  static constexpr float energyScale = 100.f;  // the network predicts energy / 100 GeV
+
+  struct PredictedCluster {
+      float energy, time;
+      float cx, cy;
   };
-
-  std::vector<BarrelCellsOnLayer> cells_; // NEEDED? maybe not a vector (one layer) OR a vector of BarrelCellsOnLayer (but removing vectors within BarrelCellsOnLayer, not SoA friendly)
-
-  std::vector<int> numberOfClustersPerLayer_;
-  math::XYZPoint calculatePosition(const std::vector<std::pair<int, float>>& v, const unsigned int layerId) const;
-
-  void prepareDataStructures(const unsigned int layerId);
-  inline float distance2(int cell1, int cell2, int layerId) const {  // distance squared
-    const float dphi = reco::deltaPhi(cells_[layerId].phi[cell1], cells_[layerId].phi[cell2]);
-    const float deta = cells_[layerId].eta[cell1] - cells_[layerId].eta[cell2];
-    return (deta * deta + dphi * dphi);
-  }
-
-  inline float distance(int cell1, int cell2, int layerId) const {  // 2-d distance on the layer (x-y)
-    return std::sqrt(distance2(cell1, cell2, layerId));
-  }
-
+  std::vector<PredictedCluster> predictedClusters_;
+  
+  math::XYZPoint calculatePosition(const float& cx, const float& cy) const;
 };
 
 #endif

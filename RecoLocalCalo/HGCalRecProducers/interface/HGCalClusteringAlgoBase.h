@@ -16,6 +16,11 @@
 #include "CondFormats/DataRecord/interface/HcalPFCutsRcd.h"
 #include "CondFormats/HcalObjects/interface/HcalPFCuts.h"
 
+#include "CondFormats/DataRecord/interface/EcalChannelStatusRcd.h"
+#include "CondFormats/EcalObjects/interface/EcalChannelStatus.h"
+#include "Geometry/CaloGeometry/interface/CaloGeometry.h"
+#include "Geometry/Records/interface/CaloGeometryRecord.h"
+
 // C/C++ headers
 #include <vector>
 #include <numeric>
@@ -80,6 +85,10 @@ public:
     algoId_ = algo;
     isNose_ = isNose;
   }
+
+  virtual void setClusTEXTokens(edm::ESGetToken<CaloGeometry, CaloGeometryRecord>,
+                                edm::ESGetToken<EcalChannelStatus, EcalChannelStatusRcd>) {}
+
   virtual void setThresholds(edm::ESGetToken<EcalPFRecHitThresholds, EcalPFRecHitThresholdsRcd>,
                              edm::ESGetToken<HcalPFCuts, HcalPFCutsRcd>){};
 
