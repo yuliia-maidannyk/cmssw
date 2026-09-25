@@ -30,6 +30,9 @@
 #include "Geometry/Records/interface/IdealGeometryRecord.h"
 #include "Geometry/CaloGeometry/interface/CaloGeometry.h"
 
+#include "CondFormats/DataRecord/interface/EcalChannelStatusRcd.h"
+#include "CondFormats/EcalObjects/interface/EcalChannelStatus.h"
+
 #include "DataFormats/ParticleFlowReco/interface/PFCluster.h"
 #include "DataFormats/ParticleFlowReco/interface/PFRecHit.h"
 
@@ -86,6 +89,10 @@ BarrelLayerClusterProducer::BarrelLayerClusterProducer(const edm::ParameterSet& 
   algo_->setThresholds(consumesCollector().esConsumes<EcalPFRecHitThresholds, EcalPFRecHitThresholdsRcd>(),
                        consumesCollector().esConsumes<HcalPFCuts, HcalPFCutsRcd>());
 
+  if (type == "EBClusTEX") {
+    algo_->setClusTEXTokens(consumesCollector().esConsumes<CaloGeometry, CaloGeometryRecord>(),
+                            consumesCollector().esConsumes<EcalChannelStatus, EcalChannelStatusRcd>()); // unique to this algo
+  }
   timeResolutionCalc_ = std::make_unique<CaloRecHitResolutionProvider>(ps.getParameterSet("timeResolutionCalc"));
   produces<std::vector<float>>("InitialLayerClustersMask");
   produces<std::vector<reco::BasicCluster>>();
@@ -101,6 +108,7 @@ void BarrelLayerClusterProducer::fillDescriptions(edm::ConfigurationDescriptions
   desc.add<edm::ParameterSetDescription>("plugin", pluginDesc);
 
   desc.add<edm::InputTag>("recHits", edm::InputTag("particleFlowRecHitECAL", ""));
+  // desc.add<edm::InputTag>("recHitsRaw", edm::InputTag("particleFlowRecHitECALRaw", ""));
 
   edm::ParameterSetDescription timeResolutionCalcDesc;
   timeResolutionCalcDesc.addNode(edm::ParameterDescription<double>("noiseTerm", 1.10889, true) and
@@ -189,7 +197,7 @@ void BarrelLayerClusterProducer::produce(edm::Event& evt, const edm::EventSetup&
 }
 
 void BarrelLayerClusterProducer::setAlgoId(std::string& type) {
-  if (type == "EBCLUE") {
+  if (type == "EBCLUE" or type == "EBClusTEX") {
     algoId_ = reco::CaloCluster::barrel_em;
   } else if (type == "HBCLUE") {
     algoId_ = reco::CaloCluster::barrel_had;
