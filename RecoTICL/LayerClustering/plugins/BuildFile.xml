@@ -24,6 +24,8 @@
   <use name="RecoLocalCalo/HGCalRecProducers"/>
   <use name="RecoParticleFlow/PFClusterProducer"/>
   <use name="RecoTICL/LayerClustering"/>
+  <use name="PhysicsTools/ONNXRuntime"/>
+  <use name="eigen"/>
   <use name="tbb"/>
   <flags EDM_PLUGIN="1"/>
 </library>

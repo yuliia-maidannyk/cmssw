@@ -32,7 +32,7 @@
 
 // C/C++ headers
 #include "PhysicsTools/ONNXRuntime/interface/ONNXRuntime.h"
-#include "RecoParticleFlow/PFClusterProducer/interface/BarrelClusTEXPreprocessing.h"
+#include "RecoTICL/LayerClustering/interface/BarrelClusTEXPreprocessing.h"
 #include <array>
 #include <memory>
 #include <cstdint>
