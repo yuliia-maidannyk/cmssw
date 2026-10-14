@@ -11,8 +11,8 @@ DEFINE_FWK_MODULE(EcalSimHitsValidation);
 #include <Validation/EcalHits/interface/EcalBarrelSimHitsValidation.h>
 DEFINE_FWK_MODULE(EcalBarrelSimHitsValidation);
 
-#include <Validation/EcalHits/interface/TransClustering.h>
-DEFINE_FWK_MODULE(TransClustering);
+// #include <Validation/EcalHits/interface/TransClustering.h>
+// DEFINE_FWK_MODULE(TransClustering);
 
 #include <Validation/EcalHits/interface/EcalEndcapSimHitsValidation.h>
 DEFINE_FWK_MODULE(EcalEndcapSimHitsValidation);

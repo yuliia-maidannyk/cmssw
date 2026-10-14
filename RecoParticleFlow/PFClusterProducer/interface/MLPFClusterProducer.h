@@ -6,6 +6,7 @@
 #include "FWCore/Utilities/interface/ESGetToken.h"
 #include "FWCore/Framework/interface/Event.h"
 #include "FWCore/Framework/interface/EventSetup.h"
+#include "FWCore/Framework/interface/ESWatcher.h"
 #include "FWCore/Framework/interface/Frameworkfwd.h"
 #include "FWCore/Framework/interface/MakerMacros.h"
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
@@ -56,8 +57,10 @@ private:
   double _param_T0_EB;
   double _param_X0;
 
-  // Store EB: DetId <==> vector<int> (subdet, ieta, iphi, status)
-  std::map<DetId, std::vector<int>> EcalAllDeadChannelsBitMap_;
+  // Flat [iphi * 171 + (ieta + 85)] grid. It is invariant within an
+  // EcalChannelStatusRcd IOV, so do not reconstruct it for every event.
+  std::vector<int> deadChannelGrid_;
+  edm::ESWatcher<EcalChannelStatusRcd> ecalChannelStatusWatcher_;
 
   edm::EDGetTokenT<EBRecHitCollection> EBrechitCollection_Token_;
   edm::ESGetToken<CaloGeometry, CaloGeometryRecord> caloGeomToken_;

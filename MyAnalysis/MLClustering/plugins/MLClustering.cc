@@ -122,22 +122,30 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
   }
 
   // Find photons from primary vertex
-  std::vector<SimTrack*> photonTracks;
-  for (auto& simTk : theSimTracks) {
-    if (simTk.noVertex()) continue;
-    if (simTk.vertIndex() == iPV && simTk.type() == 22) {
-      photonTracks.push_back(&simTk);
-      if (PRINT_DEBUG) {
-        std::cout << "Found SimTrack photon: trackId=" << simTk.trackId() 
-                  << " eta=" << simTk.momentum().eta() 
-                  << " phi=" << simTk.momentum().phi() 
-                  << " E=" << simTk.momentum().E() << std::endl;
-      }
+//   std::vector<SimTrack*> photonTracks;
+//   for (auto& simTk : theSimTracks) {
+//     if (simTk.noVertex()) continue;
+//     if (simTk.vertIndex() == iPV && simTk.type() == 22) {
+//       photonTracks.push_back(&simTk);
+//       if (PRINT_DEBUG) {
+//         std::cout << "Found SimTrack photon: trackId=" << simTk.trackId() 
+//                   << " eta=" << simTk.momentum().eta() 
+//                   << " phi=" << simTk.momentum().phi() 
+//                   << " E=" << simTk.momentum().E() << std::endl;
+//       }
+//     }
+//   }
+//   if (PRINT_DEBUG) {
+//     std::cout << "Total SimTrack photons from primary vertex: " << photonTracks.size() << std::endl;
+//   }
+  // Find photons that came straight from the generator (one per gun particle)
+    std::vector<SimTrack*> photonTracks;
+    for (auto& simTk : theSimTracks) {
+    bool cameFromGenerator = (simTk.genpartIndex() >= 0);
+    if (cameFromGenerator && simTk.type() == 22) {
+        photonTracks.push_back(&simTk);
     }
-  }
-  if (PRINT_DEBUG) {
-    std::cout << "Total SimTrack photons from primary vertex: " << photonTracks.size() << std::endl;
-  }
+    }
 
   // For each photon, look for conversion electrons
   for (auto* phoTk : photonTracks) {
@@ -145,7 +153,8 @@ void MLClustering::analyze(const edm::Event& iEvent, const edm::EventSetup& iSet
     
     for (auto& simTk : theSimTracks) {
       if (simTk.noVertex()) continue;
-      if (simTk.vertIndex() == iPV) continue;
+      //if (simTk.vertIndex() == iPV) continue;
+      if (simTk.genpartIndex() >= 0) continue;   // skip generator particles themselves
       if (abs(simTk.type()) != 11) continue; // electrons only
       
       int vertexId = simTk.vertIndex();

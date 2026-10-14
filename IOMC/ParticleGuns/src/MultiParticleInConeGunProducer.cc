@@ -1,42 +1,47 @@
-/*
- *  \author Jean-Roch Vlimant
- */
-
-#include <ostream>
+#include <cmath>
 
 #include "IOMC/ParticleGuns/interface/MultiParticleInConeGunProducer.h"
 
-#include "SimDataFormats/GeneratorProducts/interface/HepMCProduct.h"
+#include "DataFormats/Math/interface/Vector3D.h"
 #include "SimDataFormats/GeneratorProducts/interface/GenEventInfoProduct.h"
-
+#include "SimDataFormats/GeneratorProducts/interface/HepMCProduct.h"
 #include "FWCore/Framework/interface/Event.h"
 #include "FWCore/ParameterSet/interface/ParameterSet.h"
 #include "FWCore/ServiceRegistry/interface/Service.h"
 #include "FWCore/Utilities/interface/RandomNumberGenerator.h"
+#include "FWCore/Utilities/interface/Exception.h"
 
-#include "CLHEP/Random/RandFlat.h"
+#include <CLHEP/Random/RandFlat.h>
+#include <CLHEP/Units/GlobalPhysicalConstants.h>
+#include <CLHEP/Units/SystemOfUnits.h>
 
 using namespace edm;
 using namespace std;
 
-MultiParticleInConeGunProducer::MultiParticleInConeGunProducer(const ParameterSet& pset) : BaseFlatGunProducer(pset) {
-  ParameterSet defpset;
+MultiParticleInConeGunProducer::MultiParticleInConeGunProducer(const ParameterSet& pset)
+    : BaseFlatGunProducer(pset) {
   ParameterSet pgun_params = pset.getParameter<ParameterSet>("PGunParameters");
-
   fMinE = pgun_params.getParameter<double>("MinE");
   fMaxE = pgun_params.getParameter<double>("MaxE");
 
   fInConeIds = pgun_params.getParameter<vector<int> >("InConeID");
   fMinDeltaR = pgun_params.getParameter<double>("MinDeltaR");
   fMaxDeltaR = pgun_params.getParameter<double>("MaxDeltaR");
-  fMinMomRatio = pgun_params.getParameter<double>("MinMomRatio");
-  fMaxMomRatio = pgun_params.getParameter<double>("MaxMomRatio");
 
   fInConeMinEta = pgun_params.getParameter<double>("InConeMinEta");
   fInConeMaxEta = pgun_params.getParameter<double>("InConeMaxEta");
   fInConeMinPhi = pgun_params.getParameter<double>("InConeMinPhi");
   fInConeMaxPhi = pgun_params.getParameter<double>("InConeMaxPhi");
   fInConeMaxTry = pgun_params.getParameter<unsigned int>("InConeMaxTry");
+
+  fStartRadius = pgun_params.getParameter<double>("StartRadius");
+
+  fBackToBack = pgun_params.getParameter<bool>("BackToBack");
+
+  if (fBackToBack && fPartIDs.size() != 2) {
+    throw cms::Exception("Configuration")
+        << "MultiParticleInConeGunProducer: BackToBack requires exactly 2 entries in PartID, got " << fPartIDs.size() << ".";
+  }
 
   produces<HepMCProduct>("unsmeared");
   produces<GenEventInfoProduct>();
@@ -45,140 +50,151 @@ MultiParticleInConeGunProducer::MultiParticleInConeGunProducer(const ParameterSe
 MultiParticleInConeGunProducer::~MultiParticleInConeGunProducer() {
   // no need to cleanup GenEvent memory - done in HepMCProduct
 }
+// Builds one particle that starts on a cylinder around the beam line,
+// flying straight outward as if it came from the collision point (0,0,0).
+// Only valid for neutral particles (e.g. photons), which travel in straight lines.
+static HepMC::GenVertex* makeParticleStartingAtRadius(int PartID,
+                                                      double mass,
+                                                      double energy,
+                                                      double eta,
+                                                      double phi,
+                                                      double startRadiusCm,
+                                                      int barcode) {
+  
+  double momentum = (energy > mass) ? std::sqrt(energy * energy - mass * mass) : 0.;
+  double theta = 2. * std::atan(std::exp(-eta));  // angle from the beam line
+  double px = momentum * std::sin(theta) * std::cos(phi);
+  double py = momentum * std::sin(theta) * std::sin(phi);
+  double pz = momentum * std::cos(theta);
+
+  double vx = startRadiusCm * std::cos(phi);
+  double vy = startRadiusCm * std::sin(phi);
+  double vz = startRadiusCm / std::tan(theta);
+
+  // --- Start time: how long it would have taken to fly here from (0,0,0) ---
+  // HepMC stores time as "speed of light x time" in mm.
+  // For a particle moving at a fraction "beta" of light speed (1 for photons),
+  // that is simply: distance travelled / beta.
+  double distanceCm = std::sqrt(vx * vx + vy * vy + vz * vz);
+  double beta = (energy > 0.) ? momentum / energy : 1.;
+  double timeAsLengthMm = (beta > 0.) ? (distanceCm * CLHEP::cm) / beta : 0.;
+
+  // HepMC positions are in mm; multiplying by CLHEP::cm converts cm -> mm
+  HepMC::GenVertex* Vtx = new HepMC::GenVertex(HepMC::FourVector(vx * CLHEP::cm, vy * CLHEP::cm, vz * CLHEP::cm, timeAsLengthMm));
+  
+  HepMC::FourVector p(px, py, pz, energy);
+  HepMC::GenParticle* Part = new HepMC::GenParticle(p, PartID, 1);
+  Part->suggest_barcode(barcode);
+  Vtx->add_particle_out(Part);
+  return Vtx;
+}
+
+static double sampleLinearDistribution(CLHEP::HepRandomEngine* engine,
+                                       double xmin, double xmax,
+                                       double slope = 0.5, double offset = 10.0) {
+  // Accumulated probability from 0 up to x (not normalised):
+  //   F(x) = slope/2 * x^2 + offset * x
+  auto accumulated = [&](double x) { return 0.5 * slope * x * x + offset * x; };
+
+  // Pick a random point between F(xmin) and F(xmax)...
+  double u = CLHEP::RandFlat::shoot(engine, 0., 1.);
+  double target = accumulated(xmin) + u * (accumulated(xmax) - accumulated(xmin));
+
+  // ...and find the x where F(x) equals it (solving the quadratic).
+  if (slope == 0.)
+    return target / offset;  // flat distribution: no quadratic needed
+  double x = (-offset + std::sqrt(offset * offset + 2. * slope * target)) / slope;
+
+  // Guard against tiny rounding errors at the edges
+  return std::min(std::max(x, xmin), xmax);
+}
 
 void MultiParticleInConeGunProducer::produce(Event& e, const EventSetup& es) {
   edm::Service<edm::RandomNumberGenerator> rng;
   CLHEP::HepRandomEngine* engine = &rng->getEngine(e.streamID());
 
-  if (fVerbosity > 0) {
-    cout << " MultiParticleInConeGunProducer : Begin New Event Generation" << endl;
-  }
-  // event loop (well, another step in it...)
-
-  // no need to clean up GenEvent memory - done in HepMCProduct
-  //
-
-  // here re-create fEvt (memory)
-  //
   fEvt = new HepMC::GenEvent();
-
-  // now actualy, cook up the event from PDGTable and gun parameters
-  //
-  // 1st, primary vertex
-  //
-  //HepMC::GenVertex* Vtx = new HepMC::GenVertex(CLHEP::HepLorentzVector(0.,0.,0.));
-  HepMC::GenVertex* Vtx = new HepMC::GenVertex(HepMC::FourVector(0., 0., 0.));
-
-  // loop over particles
-  //
+  
   int barcode = 1;
+
+  double eta0 = CLHEP::RandFlat::shoot(engine, fMinEta, fMaxEta);
+  double phi0 = CLHEP::RandFlat::shoot(engine, fMinPhi, fMaxPhi);
+
+  double eta1 = -eta0;
+  double phi1 = (phi0 < 0) ? phi0 + M_PI : phi0 - M_PI;
+
   for (unsigned int ip = 0; ip < fPartIDs.size(); ++ip) {
+
+    // ---------- Main particle ----------
+    int pdgId = fPartIDs[ip];
+    double mass = fPDGTable->particle(HepPDT::ParticleID(std::abs(pdgId)))->mass().value();
     double energy = CLHEP::RandFlat::shoot(engine, fMinE, fMaxE);
-    double eta = CLHEP::RandFlat::shoot(engine, fMinEta, fMaxEta);
-    double phi = CLHEP::RandFlat::shoot(engine, fMinPhi, fMaxPhi);
-    int PartID = fPartIDs[ip];
-    const HepPDT::ParticleData* PData = fPDGTable->particle(HepPDT::ParticleID(abs(PartID)));
-    double mass = PData->mass().value();
-    double mom2 = energy * energy - mass * mass;
-    double mom = 0.;
-    if (mom2 > 0.) {
-      mom = sqrt(mom2);
-    } else {
-      mom = 0.;
-    }
-    double theta = 2. * atan(exp(-eta));
-    double px = mom * sin(theta) * cos(phi);
-    double py = mom * sin(theta) * sin(phi);
-    double pz = mom * cos(theta);
+    //double energy = sampleLinearDistribution(engine, fMinE, fMaxE);
+    // double eta = CLHEP::RandFlat::shoot(engine, fMinEta, fMaxEta);
+    // double phi = CLHEP::RandFlat::shoot(engine, fMinPhi, fMaxPhi);
 
-    HepMC::FourVector p(px, py, pz, energy);
-    HepMC::GenParticle* Part = new HepMC::GenParticle(p, PartID, 1);
-    Part->suggest_barcode(barcode);
+    double eta;
+    double phi;
+    if (!fBackToBack) {
+      eta = CLHEP::RandFlat::shoot(engine, fMinEta, fMaxEta);
+      phi = CLHEP::RandFlat::shoot(engine, fMinPhi, fMaxPhi);
+    }
+    else {
+      eta = (ip == 0) ? eta0 : eta1;
+      phi = (ip == 0) ? phi0 : phi1;
+    }
+
+    fEvt->add_vertex(makeParticleStartingAtRadius(pdgId, mass, energy, eta, phi, fStartRadius, barcode));
     barcode++;
-    Vtx->add_particle_out(Part);
 
-    if (fAddAntiParticle) {
+    // ---------- Particles in a cone around it ----------
+    for (unsigned int iCone = 0; iCone < fInConeIds.size(); ++iCone) {
+
+      // Try a few random positions until one lands inside the allowed eta/phi range
+      bool foundGoodPosition = false;
+      double etaCone = 0., phiCone = 0.;
+
+      for (unsigned int attempt = 0; attempt <= fInConeMaxTry; ++attempt) {
+        double distance = CLHEP::RandFlat::shoot(engine, fMinDeltaR, fMaxDeltaR);
+        double angle = CLHEP::RandFlat::shoot(engine, -M_PI, M_PI);
+
+        etaCone = eta + distance * std::cos(angle);
+        // std::remainder keeps phi between -pi and +pi
+        phiCone = std::remainder(phi + distance * std::sin(angle), 2. * M_PI);
+
+        bool etaOk = (etaCone >= fInConeMinEta && etaCone <= fInConeMaxEta);
+        bool phiOk = (phiCone >= fInConeMinPhi && phiCone <= fInConeMaxPhi);
+        if (etaOk && phiOk) {
+          foundGoodPosition = true;
+          break;
+        }
+      }
+
+      if (!foundGoodPosition) {
+        if (fVerbosity > 0)
+          cout << " No valid cone position found; skipping this cone particle." << endl;
+        continue;
+      }
+
+      int pdgIdCone = fInConeIds[iCone];
+      double massCone = fPDGTable->particle(HepPDT::ParticleID(std::abs(pdgIdCone)))->mass().value();
+      double energyCone = CLHEP::RandFlat::shoot(engine, fMinE, fMaxE);
+      //double energyCone = sampleLinearDistribution(engine, fMinE, fMaxE);
+      if (iCone == 1) 
+      {
+        energyCone = CLHEP::RandFlat::shoot(engine, 1.0, 10.0); 
+      }
+
+      // Its OWN start point, along its OWN direction
+      fEvt->add_vertex(makeParticleStartingAtRadius(pdgIdCone, massCone, energyCone, etaCone, phiCone, fStartRadius, barcode));
+      barcode++;
     }
-
-    // now add the particles in the cone
-    for (unsigned iPic = 0; iPic != fInConeIds.size(); iPic++) {
-      unsigned int nTry = 0;
-      while (true) {
-        //shoot flat Deltar
-        double dR = CLHEP::RandFlat::shoot(engine, fMinDeltaR, fMaxDeltaR);
-        //shoot flat eta/phi mixing
-        double alpha = CLHEP::RandFlat::shoot(engine, -3.14159265358979323846, 3.14159265358979323846);
-        double dEta = dR * cos(alpha);
-        double dPhi = dR * sin(alpha);
-
-        /*
-	   //shoot Energy of associated particle	 
-	   double energyIc = CLHEP::RandFlat::shoot(engine, fMinEInCone, fMaxEInCone);
-	   if (mom2Ic>0){ momIC = sqrt(mom2Ic);}
-	   */
-        //	 get kinematics
-        double etaIc = eta + dEta;
-        double phiIc = phi + dPhi;
-        //put it back in -Pi:Pi if necessary. multiple time might be necessary if dR > 3
-        const unsigned int maxL = 100;
-        unsigned int iL = 0;
-        while (iL++ < maxL) {
-          if (phiIc > 3.14159265358979323846)
-            phiIc -= 2 * 3.14159265358979323846;
-          else if (phiIc < -3.14159265358979323846)
-            phiIc += 2 * 3.14159265358979323846;
-
-          if (abs(phiIc) < 3.14159265358979323846)
-            break;
-        }
-
-        //allow to skip it if you did not run out of possible drawing
-        if (nTry++ <= fInConeMaxTry) {
-          //draw another one if this one is not in acceptance
-          if (etaIc < fInConeMinEta || etaIc > fInConeMaxEta)
-            continue;
-          if (phiIc < fInConeMinPhi || phiIc > fInConeMaxPhi)
-            continue;
-        } else {
-          if (fVerbosity > 0) {
-            cout << " MultiParticleInConeGunProducer : could not produce a particle " << fInConeIds[iPic] << " in cone "
-                 << fMinDeltaR << " to " << fMaxDeltaR << " within the " << fInConeMaxTry << " allowed tries." << endl;
-          }
-          /*	     edm::LogError("MultiParticleInConeGunProducer")<< " MultiParticleInConeGunProducer : could not produce a particle "<<
-	       fInConeIds[iPic]<<" in cone "<<
-	       fMinDeltaR<<" to "<<fMaxDeltaR<<" within the "<<fInConeMaxTry<<" allowed tries.";*/
-        }
-        int PartIDIc = fInConeIds[iPic];
-        const HepPDT::ParticleData* PDataIc = fPDGTable->particle(HepPDT::ParticleID(abs(PartIDIc)));
-
-        //shoot momentum ratio
-        double momR = CLHEP::RandFlat::shoot(engine, fMinMomRatio, fMaxMomRatio);
-        double massIc = PDataIc->mass().value();
-        double momIc = momR * mom;
-        double energyIc = sqrt(momIc * momIc + massIc * massIc);
-
-        double thetaIc = 2. * atan(exp(-etaIc));
-        double pxIc = momIc * sin(thetaIc) * cos(phiIc);
-        double pyIc = momIc * sin(thetaIc) * sin(phiIc);
-        double pzIc = momIc * cos(thetaIc);
-
-        HepMC::FourVector pIc(pxIc, pyIc, pzIc, energyIc);
-        HepMC::GenParticle* PartIc = new HepMC::GenParticle(pIc, PartIDIc, 1);
-        PartIc->suggest_barcode(barcode);
-        barcode++;
-        Vtx->add_particle_out(PartIc);
-        break;
-      }  //try many times while not in acceptance
-    }  //loop over the particle Ids in the cone
   }
 
-  fEvt->add_vertex(Vtx);
   fEvt->set_event_number(e.id().event());
   fEvt->set_signal_process_id(20);
-
-  if (fVerbosity > 0) {
+  if (fVerbosity > 0)
     fEvt->print();
-  }
 
   unique_ptr<HepMCProduct> BProduct(new HepMCProduct());
   BProduct->addHepMCData(fEvt);
@@ -186,8 +202,4 @@ void MultiParticleInConeGunProducer::produce(Event& e, const EventSetup& es) {
 
   unique_ptr<GenEventInfoProduct> genEventInfo(new GenEventInfoProduct(fEvt));
   e.put(std::move(genEventInfo));
-
-  if (fVerbosity > 0) {
-    cout << " MultiParticleInConeGunProducer : Event Generation Done " << endl;
-  }
 }

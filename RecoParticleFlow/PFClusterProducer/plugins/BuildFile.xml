@@ -22,6 +22,7 @@
   <use name="MagneticField/Engine"/>
   <use name="MagneticField/Records"/>
   <use name="Calibration/IsolatedParticles"/>
+  <use name="HeterogeneousCore/SonicTriton"/>
   <flags EDM_PLUGIN="1"/>
 </library>
 

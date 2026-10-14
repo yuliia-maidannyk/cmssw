@@ -104,56 +104,30 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   const auto& caloGeom = iSetup.getData(caloGeomToken_);
   const CaloSubdetectorGeometry* ebGeom = caloGeom.getSubdetectorGeometry(DetId::Ecal, EcalBarrel);
 
-  edm::ESHandle<EcalChannelStatus> ecalStatus;
-  ecalStatus = iSetup.getHandle(ecalStatusToken_);
+  if (ecalChannelStatusWatcher_.check(iSetup)) {
+    auto const& ecalStatus = iSetup.getData(ecalStatusToken_);
+    deadChannelGrid_.assign(361 * 171, 1);  // default: usable channel
 
-  // XXX: All the following can be built at the beginning of a job
-  // Store EB: DetId <==> vector<int> (subdet, ieta, iphi, status)
-  EcalAllDeadChannelsBitMap_.clear();
+    // This runs once per EcalChannelStatusRcd IOV, rather than once per event.
+    for (int ieta = -85; ieta <= 85; ++ieta) {
+      for (int iphi = 0; iphi <= 360; ++iphi) {
+        if (!EBDetId::validDetId(ieta, iphi))
+          continue;
 
-  // Loop over EB ...
-  for (int ieta = -85; ieta <= 85; ieta++) {
-    for (int iphi = 0; iphi <= 360; iphi++) {
-      if (!EBDetId::validDetId(ieta, iphi))
-        continue;
+        EBDetId const detid(ieta, iphi, EBDetId::ETAPHIMODE);
+        auto const chit = ecalStatus.find(detid);
+        int const status = (chit != ecalStatus.end()) ? chit->getStatusCode() & 0x1F : -1;
+        if (status < maskedEcalChannelStatusThreshold)
+          continue;
 
-      const EBDetId detid = EBDetId(ieta, iphi, EBDetId::ETAPHIMODE);
-      EcalChannelStatus::const_iterator chit = ecalStatus->find(detid);
-      // refer https://twiki.cern.ch/twiki/bin/viewauth/CMS/EcalChannelStatus
-      int status = (chit != ecalStatus->end()) ? chit->getStatusCode() & 0x1F : -1;
-
-      if (status >= maskedEcalChannelStatusThreshold) {
-        // std::cout << "Masked EB channel: ieta=" << ieta << ", iphi=" << iphi << ", status=" << status << std::endl;
-        std::vector<int> bitVec;
-        bitVec.push_back(1);
-        bitVec.push_back(ieta);
-        bitVec.push_back(iphi);
-        bitVec.push_back(status);
-        EcalAllDeadChannelsBitMap_.insert(std::make_pair(detid, bitVec));
+        int value = 1;
+        if (status >= 3 && status <= 10)
+          value = 2;  // noisy/wrong gain
+        else if (status > 10)
+          value = 3;  // completely dead
+        deadChannelGrid_[iphi * 171 + ieta + 85] = value;
       }
-    }  // end loop iphi
-  }  // end loop ieta
-
-  std::vector<std::vector<int>> dead_grid(361, std::vector<int>(171, 1)); // default = 1
-
-  for (const auto& [detid, bitVec] : EcalAllDeadChannelsBitMap_) {
-      int ieta = bitVec[1];
-      int iphi = bitVec[2];
-      int status = bitVec[3];
-
-      int ieta_shifted = ieta + 85;
-      int iphi_shifted = iphi; // [1, 360]
-
-      if (iphi_shifted < 0 || iphi_shifted >= 361) continue;
-      if (ieta_shifted < 0 || ieta_shifted >= 171) continue;
-
-      int val = 1; // ok
-      if (status >= 3 && status <= 10)
-          val = 2; // noisy/wrong gain
-      else if (status > 10)
-          val = 3; // completely dead
-
-      dead_grid[iphi_shifted][ieta_shifted] = val;
+    }
   }
 
   // **************** Loop over the EB REC hits ****************
@@ -185,7 +159,7 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
 
   for (int r = 0; r < 361; ++r) {
     for (int c = 0; c < 171; ++c) {
-        if (dead_grid[r][c] == 3) {
+        if (deadChannelGrid_[r * 171 + c] == 3) {
             map[r * 171 + c] = 0.0f;
         }
     }
@@ -228,7 +202,7 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
                   if (col < 0 || col >= 171)
                       window(dr + half, dc + half) = -1; // out of bounds in ieta
                   else
-                      window(dr + half, dc + half) = dead_grid[row][col];
+                      window(dr + half, dc + half) = deadChannelGrid_[row * 171 + col];
               }
           }
           event_masks.push_back(std::move(window));
