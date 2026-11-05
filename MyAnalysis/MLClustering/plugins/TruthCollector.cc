@@ -5,6 +5,7 @@
 #include "Calibration/IsolatedParticles/interface/DetIdFromEtaPhi.h"
 #include "MyAnalysis/MLClustering/interface/TruthCollector.h"
 #include "FWCore/MessageLogger/interface/MessageLogger.h"
+#include "SimDataFormats/EncodedEventId/interface/EncodedEventId.h"
 
 #include <fstream>
 
@@ -27,7 +28,9 @@ TruthCollector::TruthCollector(const edm::ParameterSet& iConfig)
 //   if (useCrossingFrame_) {
 //     EBCrossingFrameToken = consumes<CrossingFrame<PCaloHit> >(cfTag);
 //   }
+  EBCrossingFrameToken = consumes<CrossingFrame<PCaloHit>>(edm::InputTag("mix", "g4SimHitsEcalHitsEB"));
   puInfoToken = consumes<std::vector<PileupSummaryInfo>>(iConfig.getParameter<edm::InputTag>("pileupSummary"));
+  replayedPileupToken = consumes<PileupMixingContent>(edm::InputTag("mix", "", "RECO"));
 }
 
 TruthCollector::~TruthCollector() {}
@@ -47,6 +50,10 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
 
   std::vector<PCaloHit> EBSimHit;
   EBSimHit.insert(EBSimHit.end(), EBSimHitHandle->begin(), EBSimHitHandle->end());
+
+  edm::Handle<CrossingFrame<PCaloHit>> mixedEBSimHits;
+  iEvent.getByToken(EBCrossingFrameToken, mixedEBSimHits);
+  MixCollection<PCaloHit> allEBSimHits(mixedEBSimHits.product());
 
   //   std::vector<PCaloHit> EBSimHit;
   // With pileup the hits live in the mixed collection (signal included);
@@ -87,9 +94,18 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
       puBx.push_back(pu.getBunchCrossing());
       puNInteractions.push_back(pu.getPU_NumInteractions());
       puTrueNumInteractions.push_back(pu.getTrueNumInteractions());
-      puEvent.push_back(iEvent.id().event());
+    //   puEvent.push_back(iEvent.id().event());
     }
   }
+  // Signal + in-time pileup (the ~60 collisions of the signal bunch crossing)
+//   for (MixCollection<PCaloHit>::MixItr hit = allEBSimHits.begin(); hit != allEBSimHits.end(); ++hit) {
+//     if (hit.bunch() != 0) continue;
+//     PCaloHit simHitCopy = *hit;
+//     if (!hit.getTrigger()) {
+//       simHitCopy.setEventId(EncodedEventId(0, 1));
+//     }
+//     EBSimHit.push_back(simHitCopy);
+//   }
 
   // ***************** Check for photon conversions *****************
   
@@ -255,14 +271,14 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
 
         if (prop.getSuccess() != 0) {
             math::XYZTLorentzVector ecalPos = prop.particle().vertex();
-            double hitEta = ecalPos.eta();
-            double hitPhi = ecalPos.phi();
+            float hitEta = ecalPos.eta();
+            float hitPhi = ecalPos.phi();
             GlobalPoint gp(ecalPos.x(), ecalPos.y(), ecalPos.z());
             DetId closestCell = barrelGeom_->getClosestCell(gp);
             EBDetId ebid(closestCell);
 
-            int ieta = ebid.ieta();
-            int iphi = ebid.iphi();
+            ieta = ebid.ieta();
+            iphi = ebid.iphi();
 
             auto cell = barrelGeom_->getGeometry(ebid);
             float dEta = hitEta - cell->etaPos();
@@ -399,7 +415,7 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
   for (const reco::PFRecHit& recHit : *EBRecHit) {
     DetId hitId(recHit.detId());
     if (hitId.det() != DetId::Ecal || hitId.subdetId() != EcalBarrel) continue;
-    EBDetId ebid(hitId);    
+    EBDetId ebid(hitId);
     auto cell = std::make_pair(ebid.ieta(), ebid.iphi());
     recoCellTotal[cell] += recHit.energy();
 
@@ -462,16 +478,10 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
 
   // Give each EB hit to the particle that carried its energy into the calorimeter
   std::map<int, float> energyByEntrant;   // entrant trackId -> deposited energy
-  std::map<int, int>   hitsByEntrant;     // entrant trackId -> number of hits
   for (const auto& hit : EBSimHit) {
     if (hit.time() > 500.) continue;
     int entrant = findEntrant(hit.geantTrackId());   // -1 = could not find one
     energyByEntrant[entrant] += hit.energy();
-    hitsByEntrant[entrant]   += 1;
-  }
-  if (energyByEntrant.count(-1)) {
-    edm::LogPrint("TruthCollector") << "Event " << iEvent.id().event() << ": "
-        << energyByEntrant[-1] << " GeV of EB hits have no calorimeter-entering ancestor";
   }
 
   // One row per particle that entered the calorimeter
@@ -481,7 +491,7 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
     int id = tk.trackId();
     const auto& pos = tk.getPositionAtBoundary();   // cm
     const auto& mom = tk.getMomentumAtBoundary();   // GeV
-
+    
     // Crystal coordinates of the entrance point (barrel only)
     float entIEta = -999.f, entIPhi = -999.f;
     if (std::abs(pos.eta()) < 1.479) {
@@ -500,6 +510,8 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
     fineEntE.push_back(energyByEntrant.count(id) ? energyByEntrant[id] : 0.f);
     fineEntIEta.push_back(entIEta);
     fineEntIPhi.push_back(entIPhi);
+    fineEntEta.push_back(mom.eta());
+    fineEntPhi.push_back(mom.phi());
 
     int parentId = -1, ancestorId = id, current = id;
     auto it = decayTree.find(id);
@@ -720,7 +732,7 @@ void TruthCollector::clearEventData() {
 
   fineEvent.clear(); fineTrackId.clear(); finePDG.clear(); fineNHits.clear();
   fineE.clear(); fineInitialE.clear(); fineInitialEta.clear(); fineInitialPhi.clear();
-  fineCrossedBoundary.clear();
+  fineCrossedBoundary.clear(); fineEntEta.clear(); fineEntPhi.clear();
   fineEntIEta.clear(); fineEntIPhi.clear(); fineEntE.clear();
   fineEntX.clear(); fineEntY.clear(); fineEntZ.clear();
   fineParentId.clear(); fineAncestorId.clear(); fineGenIdx.clear();
@@ -731,6 +743,7 @@ void TruthCollector::clearEventData() {
   photonHitIEta.clear(); photonHitIPhi.clear(); photonHitEnergy.clear(); photonHitFraction.clear();
 
   puBx.clear(); puNInteractions.clear(); puTrueNumInteractions.clear(); puEvent.clear();
+  puIEta.clear(); puIPhi.clear(); puE.clear();
 }
 
 // ------------ helper method for photon conversion tracking ------------
@@ -816,6 +829,8 @@ void TruthCollector::beginJob() {
   fineTree->Branch("entranceX",       &fineEntX);
   fineTree->Branch("entranceY",       &fineEntY);
   fineTree->Branch("entranceZ",       &fineEntZ);
+  fineTree->Branch("entranceEta",     &fineEntEta);
+  fineTree->Branch("entrancePhi",     &fineEntPhi);
   fineTree->Branch("parentId",        &fineParentId);
   fineTree->Branch("ancestorId",      &fineAncestorId);
   fineTree->Branch("genIdx",          &fineGenIdx);
@@ -838,6 +853,9 @@ void TruthCollector::beginJob() {
 
   puTree = fs->make<TTree>("puTree", "Pile-up information");
   puTree->Branch("event", &puEvent);
+  puTree->Branch("ieta", &puIEta);
+  puTree->Branch("iphi", &puIPhi);
+  puTree->Branch("energy", &puE);
   puTree->Branch("bx", &puBx);
   puTree->Branch("nInteractions", &puNInteractions);
   puTree->Branch("nTrueInteractions", &puTrueNumInteractions);

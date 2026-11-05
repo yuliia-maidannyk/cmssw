@@ -27,6 +27,12 @@ namespace edm {
     double fInConeMinPhi;
     double fInConeMaxPhi;
     unsigned int fInConeMaxTry;
+    double fInConeMinE;
+    double fInConeMaxE;
+
+    bool fUseCrystalWindow;        // true = use the eta/phi crystal window instead of the circular cone
+    double fMaxDeltaEtaCrystals;   // max eta offset, in crystals
+    double fMaxDeltaPhiCrystals;   // max phi offset, in crystals
 
     double fStartRadius;
     bool fBackToBack;

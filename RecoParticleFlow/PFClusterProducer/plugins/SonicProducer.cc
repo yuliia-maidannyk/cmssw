@@ -31,7 +31,6 @@
 #include "CondFormats/DataRecord/interface/EcalChannelStatusRcd.h"
 #include "CondFormats/EcalObjects/interface/EcalChannelStatus.h"
 #include "DataFormats/EcalDetId/interface/EBDetId.h"
-#include "DataFormats/EcalRecHit/interface/EcalRecHitCollections.h"
 #include "DataFormats/ParticleFlowReco/interface/PFCluster.h"
 #include "DataFormats/ParticleFlowReco/interface/PFClusterFwd.h"
 #include "DataFormats/ParticleFlowReco/interface/PFRecHit.h"
@@ -65,9 +64,9 @@ namespace {
   const std::string kInputAbsolutePos = "inp3";  // absolute positions    (maxClusters)
   const std::string kInputDeadMasks = "inp4";    // dead-channel masks    (maxClusters, crop, crop)
 
-  const std::string kOutputCentres = "center";   // (maxClusters, 2)
-  const std::string kOutputEnergies = "energy";  // (maxClusters, 1)
-  const std::string kOutputSeeds = "seed";       // (maxClusters, 1)
+  const std::string kOutputCentres = "center";   // (maxOutputClusters, 2)
+  const std::string kOutputEnergies = "energy";  // (maxOutputClusters, 1)
+  const std::string kOutputSeeds = "seed";       // (maxOutputClusters, 1)
 
   // Add up rec-hit energies into the barrel image.
   std::vector<float> buildEnergyMap(const std::vector<int>& ietaList,
@@ -84,6 +83,23 @@ namespace {
       energyMap[cellNumber(row, column)] += energyList[i];
     }
     return energyMap;
+  }
+
+  // Bring a difference in iphi into the range [-180, 180), because iphi goes round in a circle.
+  // Same as Python's  (d + 180) % 360 - 180
+  float wrapTo180(float difference) {
+    float wrapped = std::fmod(difference + 180.0f, 360.0f);
+    if (wrapped < 0.f)
+      wrapped += 360.0f;
+    return wrapped - 180.0f;
+  }
+
+  // Bring an iphi value into the range [1, 361).
+  float wrapIphi(float iphi) {
+    float wrapped = std::fmod(iphi - 1.0f, 360.0f);
+    if (wrapped < 0.f)
+      wrapped += 360.0f;
+    return wrapped + 1.0f;
   }
 
   // Copy an endcap cluster, keeping only kinematics
@@ -120,14 +136,13 @@ private:
   const int maskedEcalChannelStatusThreshold_;
   const int cropSize_;
   const int maxClusters_;
+  int maxOutputClusters_;  // how many clusters the model predicts per group
   const int overlapLimit_;
   const double seedThreshold_;
   const double outputThreshold_;
-  const double T0_EB_;  // kept for a future shower-depth correction
-  const double X0_;     // kept for a future shower-depth correction
 
   // ---- What we read from the event / conditions ----
-  edm::EDGetTokenT<EBRecHitCollection> ebRecHitsToken_;
+  edm::EDGetTokenT<reco::PFRecHitCollection> ebRecHitsToken_;
   edm::EDGetTokenT<reco::PFClusterCollection> eeClusterToken_;
   edm::EDGetTokenT<reco::PFCluster::EEtoPSAssociation> eeToPSToken_;
   edm::ESGetToken<CaloGeometry, CaloGeometryRecord> caloGeomToken_;
@@ -150,15 +165,13 @@ SonicProducer::SonicProducer(const edm::ParameterSet& config)
       maskedEcalChannelStatusThreshold_(config.getParameter<int>("maskedEcalChannelStatusThreshold")),
       cropSize_(config.getParameter<int>("cropSize")),
       maxClusters_(config.getParameter<int>("maxClusters")),
+      maxOutputClusters_(config.getParameter<int>("maxOutputClusters")),
       overlapLimit_(config.getParameter<int>("overlapLimit")),
       seedThreshold_(config.getParameter<double>("seedThreshold")),
-      outputThreshold_(config.getParameter<double>("outputThreshold")),
-      T0_EB_(config.getParameter<double>("T0_EB")),
-      X0_(config.getParameter<double>("X0")) {
-  ebRecHitsToken_ = consumes<EBRecHitCollection>(config.getParameter<edm::InputTag>("EBrechitCollection"));
+      outputThreshold_(config.getParameter<double>("outputThreshold")) {
+  ebRecHitsToken_ = consumes<reco::PFRecHitCollection>(config.getParameter<edm::InputTag>("EBrechitCollection"));
   eeClusterToken_ = consumes<reco::PFClusterCollection>(config.getParameter<edm::InputTag>("inputEE"));
-  eeToPSToken_ =
-      consumes<reco::PFCluster::EEtoPSAssociation>(config.getParameter<edm::InputTag>("inputEEtoPSAssoc"));
+  eeToPSToken_ = consumes<reco::PFCluster::EEtoPSAssociation>(config.getParameter<edm::InputTag>("inputEEtoPSAssoc"));
   caloGeomToken_ = esConsumes<CaloGeometry, CaloGeometryRecord>();
   ecalStatusToken_ = esConsumes<EcalChannelStatus, EcalChannelStatusRcd>();
 
@@ -173,7 +186,7 @@ SonicProducer::SonicProducer(const edm::ParameterSet& config)
 void SonicProducer::acquire(edm::Event const& event, edm::EventSetup const& setup, Input& modelInputs) {
   updateDeadChannelGrid(setup);
 
-  // ---- 1a. Read barrel rec hits ----
+  // ---- 1a. Read barrel PF rec hits ----
   std::vector<int> ietaList;
   std::vector<int> iphiList;
   std::vector<float> energyList;
@@ -181,7 +194,11 @@ void SonicProducer::acquire(edm::Event const& event, edm::EventSetup const& setu
   auto recHits = event.getHandle(ebRecHitsToken_);
   if (recHits.isValid()) {
     for (const auto& hit : *recHits) {
-      EBDetId id(hit.id());
+      DetId hitId(hit.detId());
+      // The PF rec hit collection can contain the whole ECAL: keep the barrel only.
+      if (hitId.det() != DetId::Ecal || hitId.subdetId() != EcalBarrel)
+        continue;
+      EBDetId id(hitId);
       ietaList.push_back(id.ieta());
       iphiList.push_back(id.iphi());
       energyList.push_back(hit.energy());
@@ -248,8 +265,9 @@ void SonicProducer::acquire(edm::Event const& event, edm::EventSetup const& setu
         for (int c = 0; c < cropSize_; ++c)
           energies.push_back(samples.X[n][k](r, c));
 
-      // inp2: position relative to the first seed (-1 if missing)
-      relativePos.push_back(row > -1 ? float(row - firstRow) / float(effectiveWindow) : -1.0f);
+      // inp2: position relative to the first seed (-1 if missing).
+      //       The iphi difference is wrapped into [-180, 180) because iphi goes round in a circle.
+      relativePos.push_back(row > -1 ? wrapTo180(float(row - firstRow)) / float(effectiveWindow) : -1.0f);
       relativePos.push_back(column > -1 ? float(column - firstColumn) / float(effectiveWindow) : -1.0f);
 
       // inp3: absolute cell number in the image (0 for empty slots)
@@ -306,38 +324,53 @@ void SonicProducer::produce(edm::Event& event, edm::EventSetup const& setup, Out
 
   // ---- 2a. Get the model outputs ----
   // Each is a list with one entry per group; each entry is a flat list of numbers.
-  const auto& centreOffsets = modelOutputs.at(kOutputCentres).fromServer<float>();   // 2 numbers per seed
-  const auto& energyOutputs = modelOutputs.at(kOutputEnergies).fromServer<float>();  // 1 number per seed
-  const auto& seedScores = modelOutputs.at(kOutputSeeds).fromServer<float>();        // 1 number per seed
+  const auto& centreOffsets = modelOutputs.at(kOutputCentres).fromServer<float>();   // 2 numbers per cluster
+  const auto& energyOutputs = modelOutputs.at(kOutputEnergies).fromServer<float>();  // 1 number per cluster
+  const auto& seedScores = modelOutputs.at(kOutputSeeds).fromServer<float>();        // 1 number per cluster
 
   const auto* ebGeom = setup.getData(caloGeomToken_).getSubdetectorGeometry(DetId::Ecal, EcalBarrel);
 
   // ---- 2b. Keep predictions with a high enough seed score ----
   struct BarrelCluster {
     float energy;
-    math::XYZPoint position;
-    EBDetId crystal;
+    math::XYZPoint position;  // predicted position
+    EBDetId crystal;          // crystal of the seed the PFRecHit is attached to
   };
   std::vector<BarrelCluster> barrelClusters;
 
+  // The model gives offsets in units of half the effective window (13 / 2 with the default settings).
+  float halfWindow = ((cropSize_ + overlapLimit_) - 1) / 2.0f;
+
   for (int n = 0; n < numGroups_; ++n) {
-    for (int k = 0; k < maxClusters_; ++k) {
-      const float seedScore = seedScores[n][k];
+    // All predicted centres of a group are measured from the FIRST seed (the one with the highest energy).
+    float firstRow = seedCentres_[n][0](0, 0);
+    float firstColumn = seedCentres_[n][0](1, 0);
+
+    for (int k = 0; k < maxOutputClusters_; ++k) {
+      float seedScore = seedScores[n][k];
       if (seedScore <= outputThreshold_)
         continue;
 
-      // The model gives offsets in units of half a crop; add them to the seed centre.
-      const float iphiFloat = centreOffsets[n][2 * k + 0] * (cropSize_ / 2.0f) + seedCentres_[n][k](0, 0);
-      const float ietaFloat = centreOffsets[n][2 * k + 1] * (cropSize_ / 2.0f) + seedCentres_[n][k](1, 0) - 85.0f;
-      const float energy = energyOutputs[n][k] * 100.0f;
+      float iphiFloat = wrapIphi(centreOffsets[n][2 * k + 0] * halfWindow + wrapIphi(firstRow));
+      float ietaFloat = centreOffsets[n][2 * k + 1] * halfWindow + firstColumn - 85.0f;  // back to [-85, 85]
+      float energy = energyOutputs[n][k] * 120.0f;                                        // back to GeV
 
-      const int ieta = static_cast<int>(std::round(ietaFloat));
-      const int iphi = static_cast<int>(std::round(iphiFloat));
+      int ieta = int(std::round(ietaFloat));
+      int iphi = int(std::round(iphiFloat));
+      if (ieta == 0)  // ieta = 0 does not exist
+        ieta = (ietaFloat < 0.5f) ? -1 : 1;
       if (!EBDetId::validDetId(ieta, iphi))
         continue;
 
+      // The PFRecHit is attached to the crystal of seed k.
+      int seedIphi = int(seedCentres_[n][k](0, 0));
+      int seedIeta = int(seedCentres_[n][k](1, 0)) - 85;
+      seedIphi = (seedIphi - 1 + 360) % 360 + 1;  // keep iphi in [1, 360]
+      if (seedIeta == 0)                          // ieta = 0 does not exist
+        seedIeta = 1;
+
       barrelClusters.push_back(
-          {energy, barrelPosition(ebGeom, ietaFloat, iphiFloat, ieta, iphi), EBDetId(ieta, iphi)});
+          {energy, barrelPosition(ebGeom, ietaFloat, iphiFloat, ieta, iphi), EBDetId(seedIeta, seedIphi)});
     }
   }
 
@@ -360,7 +393,6 @@ void SonicProducer::produce(edm::Event& event, edm::EventSetup const& setup, Out
     cluster.setTime(-1.0f);
     cluster.setCorrectedEnergy(bc.energy);
     cluster.setPosition(bc.position);
-    cluster.addHitAndFraction(bc.crystal.rawId(), 1.0f);
     cluster.addRecHitFraction(reco::PFRecHitFraction(reco::PFRecHitRef(pfRecHitHandle, i), 1.0f));
     cluster.calculatePositionREP();
     clusters->push_back(cluster);
@@ -437,18 +469,16 @@ math::XYZPoint SonicProducer::barrelPosition(
 void SonicProducer::fillDescriptions(edm::ConfigurationDescriptions& descriptions) {
   edm::ParameterSetDescription desc;
   TritonClient::fillPSetDescription(desc);  // the "Client" block
-  desc.add<std::string>("jobId", "NOJOBID");
   desc.add<int>("maskedEcalChannelStatusThreshold", 1);
-  desc.add<edm::InputTag>("EBrechitCollection", edm::InputTag("ecalRecHit", "EcalRecHitsEB"));
+  desc.add<edm::InputTag>("EBrechitCollection", edm::InputTag("particleFlowRecHitECAL"));
   desc.add<edm::InputTag>("inputEE");
   desc.add<edm::InputTag>("inputEEtoPSAssoc");
   desc.add<int>("cropSize", 7);
   desc.add<int>("maxClusters", 20);
+  desc.add<int>("maxOutputClusters", 5);
   desc.add<int>("overlapLimit", 7);
   desc.add<double>("seedThreshold", 0.23);
   desc.add<double>("outputThreshold", 0.30);
-  desc.add<double>("T0_EB", 7.4);
-  desc.add<double>("X0", 0.89);
   descriptions.addWithDefaultLabel(desc);
 }
 

@@ -29,19 +29,36 @@ std::vector<float> build_energy_map(
     return map;
 }
 
+// Copy the EE clusters unchanged (crystals, seed, rechit refs) after the EB clusters,
+// and rewrite the EE->PS association so it points to the new positions of the EE clusters.
+void append_EE_clusters(const reco::PFClusterCollection& inputClusters,
+                        const reco::PFCluster::EEtoPSAssociation& inputAssoc,
+                        reco::PFClusterCollection& outputClusters,
+                        reco::PFCluster::EEtoPSAssociation& outputAssoc)
+{
+    std::vector<int> newIndex(inputClusters.size(), -1);  // -1 = cluster not copied
+    for (size_t i = 0; i < inputClusters.size(); ++i) {
+        if (inputClusters[i].layer() != PFLayer::ECAL_ENDCAP) continue;
+        newIndex[i] = outputClusters.size();
+        outputClusters.push_back(inputClusters[i]);
+    }
+    for (auto& [oldIndex, psCluster] : inputAssoc) {
+        if (newIndex[oldIndex] < 0) continue;
+        outputAssoc.emplace_back(newIndex[oldIndex], psCluster);
+    }
+}
+
 // ------------ constructor and destructor --------------
 MLPFClusterProducer::MLPFClusterProducer(const edm::ParameterSet& iConfig)
   : input_names_(iConfig.getParameter<std::vector<std::string>>("input_names")),
     input_shapes_(),
-    jobId(iConfig.getParameter<std::string>("jobId")),
     maskedEcalChannelStatusThreshold(iConfig.getParameter<int>("maskedEcalChannelStatusThreshold")),
     cropSize(iConfig.getParameter<int>("cropSize")),
     maxClusters(iConfig.getParameter<int>("maxClusters")),
+    maxOutputClusters(iConfig.getParameter<int>("maxOutputClusters")),
     overlapLimit(iConfig.getParameter<int>("overlapLimit")),
     seedThreshold(iConfig.getParameter<double>("seedThreshold")),
-    outputThreshold(iConfig.getParameter<double>("outputThreshold")),
-    _param_T0_EB(iConfig.getParameter<double>("T0_EB")),
-    _param_X0(iConfig.getParameter<double>("X0"))
+    outputThreshold(iConfig.getParameter<double>("outputThreshold"))
 {
   try {
     auto sessOpts = cms::Ort::ONNXRuntime::defaultSessionOptions(cms::Ort::Backend::cuda);
@@ -57,16 +74,14 @@ MLPFClusterProducer::MLPFClusterProducer(const edm::ParameterSet& iConfig)
       onnx_ = std::make_unique<cms::Ort::ONNXRuntime>(
           iConfig.getParameter<std::string>("model_path"), &cpuOpts);
   }
-  EBrechitCollection_Token_ = consumes<EBRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBrechitCollection"));
+  EBrechitCollection_Token_ = consumes<reco::PFRecHitCollection>(iConfig.getParameter<edm::InputTag>("EBrechitCollection"));
   caloGeomToken_ = esConsumes<CaloGeometry, CaloGeometryRecord>();
   ecalStatusToken_ = esConsumes<EcalChannelStatus, EcalChannelStatusRcd>();
   produces<reco::PFClusterCollection>();
   produces<reco::PFCluster::EEtoPSAssociation>();        // forwarded from corrector
   produces<reco::PFRecHitCollection>("mlPFRecHitsEB");
-  eeClusterToken_ = consumes<reco::PFClusterCollection>(
-    iConfig.getParameter<edm::InputTag>("inputEE"));
-  eeToPSToken_ = consumes<reco::PFCluster::EEtoPSAssociation>(
-    iConfig.getParameter<edm::InputTag>("inputEEtoPSAssoc"));
+  eeClusterToken_ = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("inputEE"));
+  eeToPSToken_ = consumes<reco::PFCluster::EEtoPSAssociation>(iConfig.getParameter<edm::InputTag>("inputEEtoPSAssoc"));
 }
 
 MLPFClusterProducer::~MLPFClusterProducer() {}
@@ -91,11 +106,8 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
       std::cout << "DEBUG MLPFCluster: got EEtoPSAssoc, size=" << assoc.size() << std::endl;
   }
 
-  static unsigned long eventCount = 0;
-  ++eventCount;
-
-  const EBRecHitCollection *EBRecHit = nullptr;
-  edm::Handle<EBRecHitCollection> EcalRecHitEB;
+  const reco::PFRecHitCollection *EBRecHit = nullptr;
+  edm::Handle<reco::PFRecHitCollection> EcalRecHitEB;
   iEvent.getByToken(EBrechitCollection_Token_, EcalRecHitEB);
   if (EcalRecHitEB.isValid()) {
     EBRecHit = EcalRecHitEB.product();
@@ -136,13 +148,15 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   std::vector<int> iphi_vec;
   std::vector<float> energy_vec;
 
-  for (EcalRecHitCollection::const_iterator recHit = EBRecHit->begin(); recHit != EBRecHit->end(); ++recHit) {
-    EBDetId ebid = EBDetId(recHit->id());
+  for (const reco::PFRecHit& recHit : *EBRecHit) {
+    DetId hitId(recHit.detId());
+    if (hitId.det() != DetId::Ecal || hitId.subdetId() != EcalBarrel) continue;
+    EBDetId ebid(hitId);
     int ieta = ebid.ieta();
     int iphi = ebid.iphi();
     ieta_vec.push_back(ieta);
     iphi_vec.push_back(iphi);
-    energy_vec.push_back(recHit->energy());
+    energy_vec.push_back(recHit.energy());
   }
 
   // **************** Prepare inference data ****************
@@ -155,6 +169,7 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
     std::cout << "Seed Threshold: " << seedThreshold << std::endl;
     std::cout << "Overlap Limit: " << overlapLimit << std::endl;
     std::cout << "Max Clusters: " << maxClusters << std::endl;
+    std::cout << "Max Output Clusters: " << maxOutputClusters << std::endl;
   }
 
   for (int r = 0; r < 361; ++r) {
@@ -170,7 +185,6 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   std::vector<std::vector<Eigen::MatrixXf>>& indices = result.indices; // (N, maxClusters, 2)
 
   if (PRINT_DEBUG) {
-    
     std::cout << "X shape: (" << X.size() << ", " << (X.empty() ? 0 : X[0].size()) << ", " 
                 << (X.empty() || X[0].empty() ? 0 : X[0][0].rows()) << ", " 
                 << (X.empty() || X[0].empty() ? 0 : X[0][0].cols()) << ")" << std::endl;
@@ -216,21 +230,10 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   if (numClusters == 0) {
     // No EB ML clusters — put empty PFRecHit collection
     iEvent.put(std::make_unique<reco::PFRecHitCollection>(), "mlPFRecHitsEB");
-
-    // Put EE clusters only (no EB)
-    for (auto const& c : eeClusters) {
-        if (c.layer() != PFLayer::ECAL_ENDCAP) continue;
-        reco::PFCluster eeCluster;
-        eeCluster.setLayer(PFLayer::ECAL_ENDCAP);
-        eeCluster.setEnergy(c.energy());
-        eeCluster.setCorrectedEnergy(c.correctedEnergy());
-        eeCluster.setPosition(c.position());
-        eeCluster.setTime(c.time());
-        eeCluster.calculatePositionREP();  // populate positionREP_ used by CalibratedPFCluster::eta/phi
-        clusters->push_back(eeCluster);
-    }
+    auto psAssoc = std::make_unique<reco::PFCluster::EEtoPSAssociation>();
+    append_EE_clusters(eeClusters, assoc, *clusters, *psAssoc);
     iEvent.put(std::move(clusters));
-    iEvent.put(std::make_unique<reco::PFCluster::EEtoPSAssociation>(assoc));
+    iEvent.put(std::move(psAssoc));
     return;
 }
   data_.emplace_back(numClusters * maxClusters * cropSize * cropSize, 0.f); // inp1
@@ -244,10 +247,6 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
     {numClusters, maxClusters},                     // inp3
     {numClusters, maxClusters, cropSize, cropSize}  // inp4
   };
-
-  if (PRINT_DEBUG) {
-    std::cout << "Number of clusters to run through the model: " << numClusters << std::endl;
-  }
 
   std::vector<std::vector<float>> abs_pos(numClusters, std::vector<float>(maxClusters, 0.0f)); // 1D flattened absolute positions
   for (int n = 0; n < numClusters; ++n) {
@@ -264,8 +263,8 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   int r_eff = (cropSize + overlapLimit) - 1;
 
   // Position relative to the center of the effective window
-  std::vector<std::vector<std::array<float, 2>>> rel_pos(
-      numClusters, std::vector<std::array<float, 2>>(maxClusters));
+  std::vector<std::vector<std::array<float, 2>>> rel_pos(numClusters, std::vector<std::array<float, 2>>(maxClusters));
+
   // Initialize with -1
   for (int n = 0; n < numClusters; ++n) {
       for (int i = 0; i < maxClusters; ++i) {
@@ -273,15 +272,22 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
           rel_pos[n][i][1] = -1.0f;
       }
   }
+  // (d + 180) % 360 - 180, Python-style modulo
+  auto wrap180 = [](float d) {
+    float w = std::fmod(d + 180.0f, 360.0f);
+    if (w < 0.f)
+      w += 360.0f;
+    return w - 180.0f;
+  };
   for (int n = 0; n < numClusters; ++n) {
-      int center_ieta = static_cast<int>(indices[n][0](0,0)); // Highest Edep
-      int center_iphi = static_cast<int>(indices[n][0](1,0)); // Highest Edep
-      for (int k = 0; k < maxClusters; ++k) {
-          int ieta = static_cast<int>(indices[n][k](0,0));
-          int iphi = static_cast<int>(indices[n][k](1,0));
-          if (ieta > -1) {rel_pos[n][k][0] = float(ieta - center_ieta) / float(r_eff);}
-          if (iphi > -1) {rel_pos[n][k][1] = float(iphi - center_iphi) / float(r_eff);}
-      }
+    int center_iphi = static_cast<int>(indices[n][0](0, 0)); // Highest Edep
+    int center_ieta = static_cast<int>(indices[n][0](1, 0)); // Highest Edep
+    for (int k = 0; k < maxClusters; ++k) {
+      int iphi = static_cast<int>(indices[n][k](0, 0));
+      int ieta = static_cast<int>(indices[n][k](1, 0));
+      if (iphi > -1) rel_pos[n][k][0] = wrap180(float(iphi - center_iphi)) / float(r_eff);
+      if (ieta > -1) rel_pos[n][k][1] = float(ieta - center_ieta) / float(r_eff);
+    }
   }
 
   // Reshaping functions for input
@@ -299,11 +305,8 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   // Fill from X, rel_pos, abs_pos, dead_masks
   for (int n = 0; n < numClusters; ++n) {
     for (int k = 0; k < maxClusters; ++k) {
-      // inp2 from rel_pos
       data_[1][idx2(n, k, 0)] = rel_pos[n][k][0];
       data_[1][idx2(n, k, 1)] = rel_pos[n][k][1];
-
-      // inp3 from abs_pos (now float model)
       data_[2][idx1(n, k)] = abs_pos[n][k];
 
       // inp1 from X, inp4 from dead_masks
@@ -320,14 +323,6 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   }
 
   // --- run inference ---
-  if (PRINT_DEBUG) {
-    std::cout << "Input shapes:" << std::endl;
-    for (size_t i = 0; i < input_shapes_.size(); ++i) {
-      std::cout << "  inp" << i+1 << ": [";
-      for (auto d : input_shapes_[i]) std::cout << d << ",";
-      std::cout << "] size=" << data_[i].size() << std::endl;
-    }
-  }
   std::vector<std::vector<float>> outputs = onnx_->run(input_names_, data_, input_shapes_, {}, numClusters);
 
   // convert 
@@ -335,33 +330,37 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   std::vector<float> &energy_pr = outputs[1]; // shape (batch, 20, 1)
   std::vector<float> &seed_pr   = outputs[2]; // shape (batch, 20, 1)
 
-  std::vector<std::vector<std::pair<float, float>>> centers(numClusters, std::vector<std::pair<float, float>>(maxClusters));
-  std::vector<std::vector<float>> energies(numClusters, std::vector<float>(maxClusters));
-  std::vector<std::vector<float>> seeds(numClusters, std::vector<float>(maxClusters));
+  std::vector<std::vector<std::pair<float, float>>> centers(numClusters, std::vector<std::pair<float, float>>(maxOutputClusters));
+  std::vector<std::vector<float>> energies(numClusters, std::vector<float>(maxOutputClusters));
+  std::vector<std::vector<float>> seeds(numClusters, std::vector<float>(maxOutputClusters));
 
   // Reshaping functions for outputs
-  auto idx_center = [this](int n, int i, int d) {
-      return static_cast<size_t>(n) * this->maxClusters * 2 + i * 2 + d;
+  auto wrap360 = [](float v) {
+    float w = std::fmod(v - 1.0f, 360.0f);
+    if (w < 0.f)
+    w += 360.0f;
+    return w + 1.0f;
   };
-
-  auto idx_scalar = [this](int n, int i) {
-      return static_cast<size_t>(n) * this->maxClusters + i;
-  };
+  auto out2 = [this](int n, int k, int d) { return (n * maxOutputClusters + k) * 2 + d; };
+  auto out1 = [this](int n, int k) { return n * maxOutputClusters + k; };
 
   for (int n = 0; n < numClusters; ++n) {
-      for (int i = 0; i < maxClusters; ++i) {
-          float cx = center_pr[idx_center(n, i, 0)];
-          float cy = center_pr[idx_center(n, i, 1)];
+    float indexCenter0 = indices[n][0](0, 0);  // highest Edep, same for all i
+    float indexCenter1 = indices[n][0](1, 0);
 
-          centers[n][i] = {
-              cx * (cropSize / 2.0f) + indices[n][i](0, 0),
-              cy * (cropSize / 2.0f) + indices[n][i](1, 0)
-          };
+    for (int i = 0; i < maxOutputClusters; ++i) {
+      float cx = center_pr[out2(n, i, 0)];
+      float cy = center_pr[out2(n, i, 1)];
 
-          energies[n][i] = energy_pr[idx_scalar(n, i)] * 100.0f;
-          seeds[n][i] = seed_pr[idx_scalar(n, i)];
-      }
-  }
+      float yc0 = cx * (13 / 2.0f) + wrap360(indexCenter0);
+      float yc1 = cy * (13 / 2.0f) + indexCenter1 - 85.0f;  // back to [-85, 85]
+      yc0 = wrap360(yc0);
+
+      centers[n][i] = {yc0, yc1};
+      energies[n][i] = energy_pr[out1(n, i)] * 120.;  // back to GeV
+      seeds[n][i] = seed_pr[out1(n, i)];
+    }
+  } // end of convert loop
 
   // if (PRINT_DEBUG) {
   //   for (int i = 0; i < maxClusters; i++) {
@@ -380,52 +379,59 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
   std::vector<ClusterData> validClusters;
 
   for (int n = 0; n < numClusters; ++n) {
-      for (int i = 0; i < maxClusters; ++i) {
-          float cx = centers[n][i].first;
-          float cy = centers[n][i].second - 85.0f; // shift back to [-85, 85] for ieta
-          float si = seeds[n][i];
-          float eni = energies[n][i];
-          if (si <= outputThreshold) continue;
-          int ieta = static_cast<int>(std::round(cy));
-          int iphi = static_cast<int>(std::round(cx));
-          if (PRINT_DEBUG) {
-              std::cout << "DEBUG Cluster " << n << "," << i 
+      for (int i = 0; i < maxOutputClusters; ++i) {
+        float cx = centers[n][i].first;
+        float cy = centers[n][i].second;
+        float si = seeds[n][i];
+        float eni = energies[n][i];
+        if (si <= outputThreshold) continue;
+        int ieta = static_cast<int>(std::round(cy));
+        int iphi = static_cast<int>(std::round(cx));
+        if (PRINT_DEBUG) {
+            std::cout << "DEBUG Cluster " << n << "," << i 
                         << ": seed=" << si 
                         << ", energy=" << eni 
                         << ", center=(ieta=" << cy << ", iphi=" << cx << ")" 
                         << std::endl;
-          }
-          if (!EBDetId::validDetId(ieta, iphi)) continue;
-          EBDetId ebId(ieta, iphi);
-          auto cellGeom = ebGeom->getGeometry(ebId);
-          //const GlobalPoint& pos = cellGeom->getPosition();
-          //const float maxDepth = _param_X0 * (_param_T0_EB + vdt::fast_log(eni));
-          const float maxDepth = 0.0f; // Use the front face of the crystal for now
-          const GlobalPoint p0 = static_cast<const TruncatedPyramid*>(cellGeom.get())->getPosition(maxDepth);
+        }
+        ieta = (ieta == 0) ? ((cy < 0.5f) ? -1 : 1) : ieta; // ensure valid ieta
+        if (!EBDetId::validDetId(ieta, iphi)) continue;
+        EBDetId ebId(ieta, iphi);
+        auto cellGeom = ebGeom->getGeometry(ebId);
+        //const GlobalPoint& pos = cellGeom->getPosition();
+        //const float maxDepth = _param_X0 * (_param_T0_EB + vdt::fast_log(eni));
+        const float maxDepth = 0.0f; // Use the front face of the crystal for now
+        const GlobalPoint p0 = static_cast<const TruncatedPyramid*>(cellGeom.get())->getPosition(maxDepth);
 
-          float deta = cy - ieta;
-          float dphi = cx - iphi;
+        float deta = cy - ieta;
+        float dphi = cx - iphi;
 
-          // Eta neighbor at shower depth
-          GlobalPoint pEta = p0;
-          if (EBDetId::validDetId(ieta + (deta >= 0 ? 1 : -1), iphi)) {
-              auto cell_eta = ebGeom->getGeometry(EBDetId(ieta + (deta >= 0 ? 1 : -1), iphi));
-              pEta = static_cast<const TruncatedPyramid*>(cell_eta.get())->getPosition(maxDepth);
-          }
+        // Eta neighbor at shower depth
+        GlobalPoint pEta = p0;
+        if (EBDetId::validDetId(ieta + (deta >= 0 ? 1 : -1), iphi)) {
+            auto cell_eta = ebGeom->getGeometry(EBDetId(ieta + (deta >= 0 ? 1 : -1), iphi));
+            pEta = static_cast<const TruncatedPyramid*>(cell_eta.get())->getPosition(maxDepth);
+        }
 
-          // Phi neighbor at shower depth
-          GlobalPoint pPhi = p0;
-          if (EBDetId::validDetId(ieta, iphi + (dphi >= 0 ? 1 : -1))) {
-              auto cell_phi = ebGeom->getGeometry(EBDetId(ieta, iphi + (dphi >= 0 ? 1 : -1)));
-              pPhi = static_cast<const TruncatedPyramid*>(cell_phi.get())->getPosition(maxDepth);
-          }
+        // Phi neighbor at shower depth
+        GlobalPoint pPhi = p0;
+        if (EBDetId::validDetId(ieta, iphi + (dphi >= 0 ? 1 : -1))) {
+            auto cell_phi = ebGeom->getGeometry(EBDetId(ieta, iphi + (dphi >= 0 ? 1 : -1)));
+            pPhi = static_cast<const TruncatedPyramid*>(cell_phi.get())->getPosition(maxDepth);
+        }
 
-          // Combine: depth-corrected center + lateral sub-crystal offset
-          float x = p0.x() + std::abs(deta) * (pEta.x() - p0.x()) + std::abs(dphi) * (pPhi.x() - p0.x());
-          float y = p0.y() + std::abs(deta) * (pEta.y() - p0.y()) + std::abs(dphi) * (pPhi.y() - p0.y());
-          float z = p0.z() + std::abs(deta) * (pEta.z() - p0.z()) + std::abs(dphi) * (pPhi.z() - p0.z());
+        // Combine: depth-corrected center + lateral sub-crystal offset
+        float x = p0.x() + std::abs(deta) * (pEta.x() - p0.x()) + std::abs(dphi) * (pPhi.x() - p0.x());
+        float y = p0.y() + std::abs(deta) * (pEta.y() - p0.y()) + std::abs(dphi) * (pPhi.y() - p0.y());
+        float z = p0.z() + std::abs(deta) * (pEta.z() - p0.z()) + std::abs(dphi) * (pPhi.z() - p0.z());
 
-          validClusters.push_back({eni, -1.0f, math::XYZPoint(x, y, z), ebId});
+        int seedIPhi = indices[n][i](0, 0);
+        int seedIEta = indices[n][i](1, 0) - 85;
+        seedIPhi = (seedIPhi - 1 + 360) % 360 + 1; // ensure valid iphi
+        seedIEta = (seedIEta == 0) ? 1 : seedIEta; // ensure valid ieta
+        EBDetId seed(seedIEta, seedIPhi);
+
+        validClusters.push_back({eni, -1.0f, math::XYZPoint(x, y, z), seed});
       }
   }
 
@@ -452,7 +458,8 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
       cluster.setTime(cd.time);
       cluster.setCorrectedEnergy(cd.energy);
       cluster.setPosition(cd.pos);
-      cluster.addHitAndFraction(cd.ebId.rawId(), 1.0f);
+      cluster.setSeed(cd.ebId);
+    //   cluster.addHitAndFraction(cd.ebId.rawId(), 1.0f);
       reco::PFRecHitRef ref(pfRecHitHandle, idx);
       cluster.addRecHitFraction(reco::PFRecHitFraction(ref, 1.0f));
       if (PRINT_DEBUG) {
@@ -482,21 +489,11 @@ void MLPFClusterProducer::produce(edm::Event& iEvent, const edm::EventSetup& iSe
       std::cout << "DEBUG EB=" << nEB << " EE=" << nEE << std::endl;
   }
 
-  for (auto const& c : eeClusters) {
-    if (c.layer() != PFLayer::ECAL_ENDCAP) continue;
-    reco::PFCluster eeCluster;
-    eeCluster.setLayer(PFLayer::ECAL_ENDCAP);
-    eeCluster.setEnergy(c.energy());
-    eeCluster.setCorrectedEnergy(c.correctedEnergy());
-    eeCluster.setPosition(c.position());
-    eeCluster.setTime(c.time());
-    eeCluster.calculatePositionREP();  // populate positionREP_ used by CalibratedPFCluster::eta/phi
-    clusters->push_back(eeCluster);
-  }
-  iEvent.put(std::move(clusters));  // empty instance name — IS particleFlowClusterECAL
+  auto psAssoc = std::make_unique<reco::PFCluster::EEtoPSAssociation>();
+  append_EE_clusters(eeClusters, assoc, *clusters, *psAssoc);
+  iEvent.put(std::move(clusters));
+  iEvent.put(std::move(psAssoc));
 
-  // Forward EEtoPSAssociation unchanged
-  iEvent.put(std::make_unique<reco::PFCluster::EEtoPSAssociation>(assoc));
 } // --- end of produce
 
 DEFINE_FWK_MODULE(MLPFClusterProducer);

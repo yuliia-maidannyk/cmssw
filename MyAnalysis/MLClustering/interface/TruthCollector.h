@@ -31,8 +31,8 @@
 #include "SimDataFormats/Vertex/interface/SimVertexContainer.h"
 #include "SimDataFormats/CaloAnalysis/interface/CaloParticle.h"
 #include "SimDataFormats/CaloAnalysis/interface/CaloParticleFwd.h"
-// #include "SimDataFormats/CrossingFrame/interface/CrossingFrame.h"
-// #include "SimDataFormats/CrossingFrame/interface/MixCollection.h"
+#include "SimDataFormats/CrossingFrame/interface/CrossingFrame.h"
+#include "SimDataFormats/CrossingFrame/interface/MixCollection.h"
 #include "SimDataFormats/PileupSummaryInfo/interface/PileupSummaryInfo.h"
 
 #include "Geometry/CaloGeometry/interface/CaloGeometry.h"
@@ -50,6 +50,8 @@
 #include "MagneticField/Records/interface/IdealMagneticFieldRecord.h"
 #include "MagneticField/Engine/interface/MagneticField.h"
 #include "CommonTools/BaseParticlePropagator/interface/BaseParticlePropagator.h"
+#include "SimDataFormats/PileupSummaryInfo/interface/PileupMixingContent.h"
+#include <set>
 
 #include <map>
 #include <vector>
@@ -92,9 +94,10 @@ private:
   edm::ESGetToken<CaloGeometry, CaloGeometryRecord> ecalGeomToken;
   edm::ESGetToken<EcalChannelStatus, EcalChannelStatusRcd> ecalStatusToken;
   edm::ESGetToken<MagneticField, IdealMagneticFieldRecord> magFieldToken;
-//   edm::EDGetTokenT<CrossingFrame<PCaloHit> > EBCrossingFrameToken;
+  edm::EDGetTokenT<CrossingFrame<PCaloHit> > EBCrossingFrameToken;
 //   bool useCrossingFrame_ = false;   // true when a pileup crossing frame is configured
   edm::EDGetTokenT<std::vector<PileupSummaryInfo>> puInfoToken;
+  edm::EDGetTokenT<PileupMixingContent> replayedPileupToken;
 
   TTree* simTree;
   TTree* recoTree;
@@ -153,6 +156,7 @@ private:
   std::vector<float> fineEntIEta, fineEntIPhi, fineEntE;     // at ECAL entrance
   std::vector<float> fineEntX, fineEntY, fineEntZ;           // global cm
   std::vector<int>   fineParentId, fineAncestorId, fineGenIdx;
+  std::vector<float> fineEntEta, fineEntPhi;
   
   std::vector<int>      fineMapEvent;
   std::vector<int>      fineMapIEta, fineMapIPhi;
@@ -174,6 +178,8 @@ private:
   std::vector<int>   puNInteractions;   // interactions mixed into that BX
   std::vector<float> puTrueNumInteractions;  // Poisson mean for the event
   std::vector<int>   puEvent;
+  std::vector<int>   puIEta, puIPhi;
+  std::vector<float> puE;
 };
 
 #endif

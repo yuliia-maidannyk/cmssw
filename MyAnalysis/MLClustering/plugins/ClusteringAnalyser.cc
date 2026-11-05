@@ -12,7 +12,7 @@
 
 // ------------ constructor and destructor --------------
 ClusteringAnalyser::ClusteringAnalyser(const edm::ParameterSet& iConfig)
-  : jobId(iConfig.getParameter<std::string>("jobId")),
+  : jobId(iConfig.getParameter<std::string>("jobId"))
 {
   pfClusterToken = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECAL"));
   mlpfClusterToken = consumes<reco::PFClusterCollection>(iConfig.getParameter<edm::InputTag>("particleFlowClusterECALML"));
@@ -65,8 +65,10 @@ void ClusteringAnalyser::analyze(const edm::Event& iEvent, const edm::EventSetup
     float ieta_f = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
     float iphi_f = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
 
-    pfEta.push_back(ieta_f);
-    pfPhi.push_back(iphi_f);
+    pfIEta.push_back(ieta_f);
+    pfIPhi.push_back(iphi_f);
+    pfEta.push_back(hitEta);
+    pfPhi.push_back(hitPhi);
 
     if (VALIDATE) {
         pfGunE_->Fill(corr_E);
@@ -92,6 +94,13 @@ void ClusteringAnalyser::analyze(const edm::Event& iEvent, const edm::EventSetup
         float corr_E = static_cast<float>(pf.correctedEnergy());
         mlE.push_back(corr_E);
 
+        // Get the seed crystal's ieta and iphi
+        for (auto const& hf : pf.hitsAndFractions()) {
+            EBDetId hitId(hf.first);
+            mlSeedEta.push_back(hitId.ieta());
+            mlSeedPhi.push_back(hitId.iphi());
+        }
+
         math::XYZPoint pfPos = pf.position();
         GlobalPoint gp(pfPos.x(), pfPos.y(), pfPos.z());
         DetId closestCell = barrelGeom_->getClosestCell(gp);
@@ -114,8 +123,10 @@ void ClusteringAnalyser::analyze(const edm::Event& iEvent, const edm::EventSetup
             mlGunEta_->Fill(ieta_f);
             mlGunPhi_->Fill(iphi_f);
         }
-        mlEta.push_back(ieta_f);
-        mlPhi.push_back(iphi_f);
+        mlIEta.push_back(ieta_f);
+        mlIPhi.push_back(iphi_f);
+        mlEta.push_back(hitEta);
+        mlPhi.push_back(hitPhi);
 
         if (PRINT_DEBUG) {std::cout << " MLPFCluster E=" << corr_E << " at (" << ieta << ", " << iphi << ")" 
         << " with eta_f=" << ieta_f << ", phi_f=" << iphi_f << std::endl;}
@@ -131,8 +142,9 @@ void ClusteringAnalyser::analyze(const edm::Event& iEvent, const edm::EventSetup
 } // --- end of analyze
 
 void ClusteringAnalyser::clearEventData() {
-  pfEvent.clear(); pfPhi.clear(); pfEta.clear(); pfE.clear();
-  mlEvent.clear(); mlPhi.clear(); mlEta.clear(); mlE.clear();
+  pfEvent.clear(); pfPhi.clear(); pfEta.clear(); pfE.clear(); pfIEta.clear(); pfIPhi.clear();
+  mlEvent.clear(); mlPhi.clear(); mlEta.clear(); mlE.clear(); mlIEta.clear(); mlIPhi.clear();
+  mlSeedPhi.clear(); mlSeedEta.clear();
   pfRawE.clear(); //pfMapEvent.clear(); pfMapIEta.clear(); pfMapIPhi.clear(); pfMapEnergy.clear(); pfMapFraction.clear();
 }
 
@@ -175,6 +187,8 @@ void ClusteringAnalyser::beginJob() {
 
   pfTree = fs->make<TTree>("pfTree", "A tree with PFCluster information");
   pfTree->Branch("energy", &pfE);
+  pfTree->Branch("ieta",   &pfIEta);
+  pfTree->Branch("iphi",   &pfIPhi);
   pfTree->Branch("eta",    &pfEta);
   pfTree->Branch("phi",    &pfPhi);
   pfTree->Branch("event",  &pfEvent);
@@ -187,9 +201,13 @@ void ClusteringAnalyser::beginJob() {
 
   mlTree = fs->make<TTree>("mlTree", "A tree with MLPFCluster information");
   mlTree->Branch("energy", &mlE);
+  mlTree->Branch("ieta",   &mlIEta);
+  mlTree->Branch("iphi",   &mlIPhi);
   mlTree->Branch("eta",    &mlEta);
   mlTree->Branch("phi",    &mlPhi);
   mlTree->Branch("event",  &mlEvent);
+  mlTree->Branch("seed_eta", &mlSeedEta);
+  mlTree->Branch("seed_phi", &mlSeedPhi);
 }
 
 DEFINE_FWK_MODULE(ClusteringAnalyser);

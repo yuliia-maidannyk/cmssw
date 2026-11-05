@@ -16,8 +16,8 @@
 
 #include "DataFormats/ParticleFlowReco/interface/PFCluster.h"
 #include "DataFormats/ParticleFlowReco/interface/PFClusterFwd.h"
-#include "DataFormats/EcalRecHit/interface/EcalRecHit.h"
-#include "DataFormats/EcalRecHit/interface/EcalRecHitCollections.h"
+#include "DataFormats/ParticleFlowReco/interface/PFRecHit.h"
+#include "DataFormats/ParticleFlowReco/interface/PFRecHitFwd.h"
 
 #include "Geometry/CaloGeometry/interface/CaloGeometry.h"
 #include "Geometry/Records/interface/CaloGeometryRecord.h"
@@ -47,22 +47,20 @@ private:
   cms::Ort::FloatArrays data_;
   std::unique_ptr<cms::Ort::ONNXRuntime> onnx_;
   
-  std::string jobId;
   int maskedEcalChannelStatusThreshold;
   int cropSize;
   int maxClusters;
+  int maxOutputClusters;
   int overlapLimit;
   double seedThreshold;
   double outputThreshold;
-  double _param_T0_EB;
-  double _param_X0;
 
   // Flat [iphi * 171 + (ieta + 85)] grid. It is invariant within an
   // EcalChannelStatusRcd IOV, so do not reconstruct it for every event.
   std::vector<int> deadChannelGrid_;
   edm::ESWatcher<EcalChannelStatusRcd> ecalChannelStatusWatcher_;
 
-  edm::EDGetTokenT<EBRecHitCollection> EBrechitCollection_Token_;
+  edm::EDGetTokenT<reco::PFRecHitCollection> EBrechitCollection_Token_;
   edm::ESGetToken<CaloGeometry, CaloGeometryRecord> caloGeomToken_;
   edm::ESGetToken<EcalChannelStatus, EcalChannelStatusRcd> ecalStatusToken_;
   edm::EDGetTokenT<reco::PFClusterCollection> eeClusterToken_;

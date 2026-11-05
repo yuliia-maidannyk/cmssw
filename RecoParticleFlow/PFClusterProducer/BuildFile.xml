@@ -27,6 +27,7 @@
 <use name="HeterogeneousCore/AlpakaCore"/>
 <use name="HeterogeneousCore/AlpakaInterface"/>
 <flags ALPAKA_BACKENDS="1"/>
+<flags CXXFLAGS="-DEIGEN_DONT_VECTORIZE"/>
 <export>
   <lib name="1"/>
 </export>

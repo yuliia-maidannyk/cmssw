@@ -69,13 +69,19 @@ private:
   std::vector<int>    pfEvent;
   std::vector<float>  pfPhi;
   std::vector<float>  pfEta;
+  std::vector<float>  pfIEta;
+  std::vector<float>  pfIPhi;
   std::vector<double> pfE;
   std::vector<double> pfRawE;
 
   std::vector<int>    mlEvent;
   std::vector<float>  mlPhi;
   std::vector<float>  mlEta;
+  std::vector<float>  mlIEta;
+  std::vector<float>  mlIPhi;
   std::vector<double> mlE;
+  std::vector<int>    mlSeedPhi;
+  std::vector<int>    mlSeedEta;
 
 //   std::vector<int>    pfMapEvent;
 //   std::vector<int>    pfMapIEta;

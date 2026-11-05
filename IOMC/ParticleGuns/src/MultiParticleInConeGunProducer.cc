@@ -33,6 +33,12 @@ MultiParticleInConeGunProducer::MultiParticleInConeGunProducer(const ParameterSe
   fInConeMinPhi = pgun_params.getParameter<double>("InConeMinPhi");
   fInConeMaxPhi = pgun_params.getParameter<double>("InConeMaxPhi");
   fInConeMaxTry = pgun_params.getParameter<unsigned int>("InConeMaxTry");
+  fInConeMinE = pgun_params.getParameter<double>("InConeMinE");
+  fInConeMaxE = pgun_params.getParameter<double>("InConeMaxE");
+
+  fUseCrystalWindow = pgun_params.getParameter<bool>("UseCrystalWindow");
+  fMaxDeltaEtaCrystals = pgun_params.getParameter<double>("MaxDeltaEtaCrystals");
+  fMaxDeltaPhiCrystals = pgun_params.getParameter<double>("MaxDeltaPhiCrystals");
 
   fStartRadius = pgun_params.getParameter<double>("StartRadius");
 
@@ -119,9 +125,8 @@ void MultiParticleInConeGunProducer::produce(Event& e, const EventSetup& es) {
 
   double eta0 = CLHEP::RandFlat::shoot(engine, fMinEta, fMaxEta);
   double phi0 = CLHEP::RandFlat::shoot(engine, fMinPhi, fMaxPhi);
-
-  double eta1 = -eta0;
   double phi1 = (phi0 < 0) ? phi0 + M_PI : phi0 - M_PI;
+  double eta1 = -eta0;
 
   for (unsigned int ip = 0; ip < fPartIDs.size(); ++ip) {
 
@@ -133,15 +138,15 @@ void MultiParticleInConeGunProducer::produce(Event& e, const EventSetup& es) {
     // double eta = CLHEP::RandFlat::shoot(engine, fMinEta, fMaxEta);
     // double phi = CLHEP::RandFlat::shoot(engine, fMinPhi, fMaxPhi);
 
-    double eta;
     double phi;
+    double eta;
     if (!fBackToBack) {
-      eta = CLHEP::RandFlat::shoot(engine, fMinEta, fMaxEta);
       phi = CLHEP::RandFlat::shoot(engine, fMinPhi, fMaxPhi);
+      eta = CLHEP::RandFlat::shoot(engine, fMinEta, fMaxEta);
     }
     else {
-      eta = (ip == 0) ? eta0 : eta1;
       phi = (ip == 0) ? phi0 : phi1;
+      eta = (ip == 0) ? eta0 : eta1;
     }
 
     fEvt->add_vertex(makeParticleStartingAtRadius(pdgId, mass, energy, eta, phi, fStartRadius, barcode));
@@ -155,12 +160,28 @@ void MultiParticleInConeGunProducer::produce(Event& e, const EventSetup& es) {
       double etaCone = 0., phiCone = 0.;
 
       for (unsigned int attempt = 0; attempt <= fInConeMaxTry; ++attempt) {
-        double distance = CLHEP::RandFlat::shoot(engine, fMinDeltaR, fMaxDeltaR);
-        double angle = CLHEP::RandFlat::shoot(engine, -M_PI, M_PI);
+        // double distance = CLHEP::RandFlat::shoot(engine, fMinDeltaR, fMaxDeltaR);
+        // double angle = CLHEP::RandFlat::shoot(engine, -M_PI, M_PI);
 
-        etaCone = eta + distance * std::cos(angle);
-        // std::remainder keeps phi between -pi and +pi
-        phiCone = std::remainder(phi + distance * std::sin(angle), 2. * M_PI);
+        // etaCone = eta + distance * std::cos(angle);
+        // phiCone = std::remainder(phi + distance * std::sin(angle), 2. * M_PI); // between -pi and +pi
+
+        if (fUseCrystalWindow) {
+          // Rectangular window
+          double maxDeltaEta = fMaxDeltaEtaCrystals * 0.0174;
+          double maxDeltaPhi = fMaxDeltaPhiCrystals * 0.0174;
+          double deltaEta = CLHEP::RandFlat::shoot(engine, -maxDeltaEta, maxDeltaEta);
+          double deltaPhi = CLHEP::RandFlat::shoot(engine, -maxDeltaPhi, maxDeltaPhi);
+
+          etaCone = eta + deltaEta;
+          phiCone = std::remainder(phi + deltaPhi, 2. * M_PI);
+        } else {
+          double distance = CLHEP::RandFlat::shoot(engine, fMinDeltaR, fMaxDeltaR);
+          double angle = CLHEP::RandFlat::shoot(engine, -M_PI, M_PI);
+
+          etaCone = eta + distance * std::cos(angle);
+          phiCone = std::remainder(phi + distance * std::sin(angle), 2. * M_PI);
+        }
 
         bool etaOk = (etaCone >= fInConeMinEta && etaCone <= fInConeMaxEta);
         bool phiOk = (phiCone >= fInConeMinPhi && phiCone <= fInConeMaxPhi);
@@ -178,11 +199,15 @@ void MultiParticleInConeGunProducer::produce(Event& e, const EventSetup& es) {
 
       int pdgIdCone = fInConeIds[iCone];
       double massCone = fPDGTable->particle(HepPDT::ParticleID(std::abs(pdgIdCone)))->mass().value();
-      double energyCone = CLHEP::RandFlat::shoot(engine, fMinE, fMaxE);
+      double energyCone; //= CLHEP::RandFlat::shoot(engine, fMinE, fMaxE);
       //double energyCone = sampleLinearDistribution(engine, fMinE, fMaxE);
-      if (iCone == 1) 
-      {
-        energyCone = CLHEP::RandFlat::shoot(engine, 1.0, 10.0); 
+      // Cone photons are uniform in [InConeMinE, InConeMaxE], but never above the main photon,
+      // so the main photon is always the most energetic one (the centre of the 7x7 window)
+      if (iCone == 0) {
+        energyCone = CLHEP::RandFlat::shoot(engine, fMinE, fMaxE);
+      } else {
+        double maxEnergyCone = std::min(fInConeMaxE, energy);
+        energyCone = CLHEP::RandFlat::shoot(engine, fInConeMinE, maxEnergyCone);
       }
 
       // Its OWN start point, along its OWN direction

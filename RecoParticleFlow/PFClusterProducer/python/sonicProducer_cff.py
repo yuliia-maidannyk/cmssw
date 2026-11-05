@@ -21,7 +21,7 @@ def useSonicForMLPFClusters(process):
         servers = cms.untracked.VPSet(
             cms.PSet(
                 name    = cms.untracked.string("shared"),
-                address = cms.untracked.string("feynmangpu04.extra.cea.fr"),
+                address = cms.untracked.string("feynmangpu01.extra.cea.fr"),
                 port    = cms.untracked.uint32(8002),
             ),
         ),
@@ -38,18 +38,16 @@ def useSonicForMLPFClusters(process):
             timeout         = cms.untracked.uint32(30),   # seconds
             preferredServer = cms.untracked.string("shared"),
         ),
-        jobId                            = old.jobId,
         maskedEcalChannelStatusThreshold = old.maskedEcalChannelStatusThreshold,
         EBrechitCollection               = old.EBrechitCollection,
         inputEE                          = old.inputEE,
         inputEEtoPSAssoc                 = old.inputEEtoPSAssoc,
         cropSize                         = old.cropSize,
         maxClusters                      = old.maxClusters,
+        maxOutputClusters                = old.maxOutputClusters,
         overlapLimit                     = old.overlapLimit,
         seedThreshold                    = old.seedThreshold,
-        outputThreshold                  = old.outputThreshold,
-        T0_EB                            = old.T0_EB,
-        X0                               = old.X0,
+        outputThreshold                  = old.outputThreshold
     )
 
     return process
