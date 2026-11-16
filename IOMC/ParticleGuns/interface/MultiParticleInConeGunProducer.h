@@ -1,12 +1,6 @@
 #ifndef MultiParticleInConeGunProducer_H
 #define MultiParticleInConeGunProducer_H
 
-/** \class MultiParticleInConeGunProducer
- *
- * Generates single particle gun in HepMC format
- * Jean-Roch Vlimant
- ***************************************/
-
 #include "IOMC/ParticleGuns/interface/BaseFlatGunProducer.h"
 
 namespace edm {
@@ -21,20 +15,27 @@ namespace edm {
 
   protected:
     // data members
-    double fMinPt;
-    double fMaxPt;
+    double fMinE;
+    double fMaxE;
 
     std::vector<int> fInConeIds;
     double fMinDeltaR;
     double fMaxDeltaR;
-    double fMinMomRatio;
-    double fMaxMomRatio;
 
     double fInConeMinEta;
     double fInConeMaxEta;
     double fInConeMinPhi;
     double fInConeMaxPhi;
     unsigned int fInConeMaxTry;
+    double fInConeMinE;
+    double fInConeMaxE;
+
+    bool fUseCrystalWindow;        // true = use the eta/phi crystal window instead of the circular cone
+    double fMaxDeltaEtaCrystals;   // max eta offset, in crystals
+    double fMaxDeltaPhiCrystals;   // max phi offset, in crystals
+
+    double fStartRadius;
+    bool fBackToBack;
   };
 }  // namespace edm
 
