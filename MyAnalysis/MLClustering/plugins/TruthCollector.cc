@@ -188,7 +188,6 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
 
   // ***************** Loop over the GEN particles *****************
 
-  std::map<int, int> photonAncestorToGenIdx;  // ancestor SimTrack trackId -> index in *genParticles, for UNCONVERTED photons only
   int genIdx = -1;
   for (const auto& genParticle : *genParticles) {
     ++genIdx;
@@ -207,7 +206,6 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
                 << ", vertex: (" << vx << ", " << vy << ", " << vz << ")" << "\n";
 
     // Check if this photon converted (by matching to SimTracks from primary vertex)
-    int isConverted = 0;
     float convR = 0., convZ = 0.;
     float ieta = 0;
     float iphi = 0;
@@ -246,13 +244,8 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
         if ((convInfo.first > 0 || convInfo.second != 0)) {
           convR = convInfo.first;
           convZ = convInfo.second;
-          if (convInfo.first < 129) {isConverted = 1;}
           LogDebug("TruthCollector") << "  -> Converted at R=" << convR << ", Z=" << convZ << "\n";
         }
-      }
-      // Record unconverted photons so fine-calo hits can be attributed back to them.
-      if (bestTrackId > 0 && isConverted == 0) {
-        photonAncestorToGenIdx[(int)bestTrackId] = genIdx;
       }
 
       for (SimTrack* phoTk : photonTracks) {
@@ -302,13 +295,12 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
       genEtaF.push_back(ieta_f);
       genPhiF.push_back(iphi_f);
       genE.push_back(energy);
-      genIsConverted.push_back(isConverted);
       genConvR.push_back(convR);
       genConvZ.push_back(convZ);
     } // end of primary photon loop
   } // end of gen particle loop
 
-    struct TrackNode {
+  struct TrackNode {
     int      trackId;
     int      pdgId;
     int      parentTrackId;   // -1 if primary
@@ -556,163 +548,13 @@ void TruthCollector::analyze(const edm::Event& iEvent, const edm::EventSetup& iS
         }
       }
       fineMapAncestor.push_back(ancestorId);
-
-      auto photonIt = photonAncestorToGenIdx.find(ancestorId);
-        if (photonIt != photonAncestorToGenIdx.end()) {
-            photonHitEvent.push_back(iEvent.id().event());
-            photonHitGenIdx.push_back(photonIt->second);
-            photonHitTrackId.push_back(ancestorId);
-            photonHitIEta.push_back(cell.first);
-            photonHitIPhi.push_back(cell.second);
-            photonHitEnergy.push_back(ei);
-            photonHitFraction.push_back(total > 0.f ? ei / total : 0.f);
-        }
   }
-
-  // ************** Fine-calo: EB PCaloHits grouped by boundary-crossing track **************
-//   // trackId -> SimTrack* lookup (boundary vars live on the full SimTrackContainer)
-//   std::map<unsigned, const SimTrack*> tkById;
-//   for (const auto& tk : *simTracks) tkById[tk.trackId()] = &tk;
-
-//   // Accumulate EB deposits per fine track id (== boundary-crossing parent)
-//   struct FineAcc {
-//     float ei=0.f;
-//     int ni=0;
-//   };
-//   std::map<int, FineAcc> fineAcc;
-//   for (const auto& hit : EBSimHit) {
-//     if (hit.time() > 500.) continue;
-//     FineAcc& a = fineAcc[hit.geantTrackId()];
-//     a.ei += hit.energy();
-//     a.ni += 1;
-//   }
-
-//   for (const auto& [tkId, acc] : fineAcc) {
-//     fineEvent.push_back(iEvent.id().event());
-//     fineTrackId.push_back(tkId);
-//     fineNHits.push_back(acc.ni);
-//     fineE.push_back(acc.ei);
-
-//     const SimTrack* tk = tkById.count((unsigned)tkId) ? tkById[(unsigned)tkId] : nullptr;
-//     finePDG.push_back(tk ? tk->type() : 0);
-//     fineInitialE.push_back(tk ? (float)tk->momentum().e() : -999.f);
-//     fineInitialEta.push_back(tk ? (float)tk->momentum().eta() : -999.f);
-//     fineInitialPhi.push_back(tk ? (float)tk->momentum().phi() : -999.f);
-//     fineGenIdx.push_back(tk ? tk->genpartIndex() : -1);
-
-//     // ECAL entrance straight from the Geant4 boundary crossing
-//     float entIEta=-999.f, entIPhi=-999.f, entE=-999.f, entX=-999.f, entY=-999.f, entZ=-999.f;
-//     int crossed = 0;
-
-//     if (tk && tk->crossedBoundary()) {
-//       crossed = 1;
-//       const auto& pB = tk->getPositionAtBoundary();   // global, cm
-//       const auto& mB = tk->getMomentumAtBoundary();
-//       entX = pB.x(); entY = pB.y(); entZ = pB.z(); entE = mB.e();
-
-//       float hitEta = pB.eta();
-//       float hitPhi = pB.phi();
-
-//       if (std::abs(hitEta) < 1.479) {
-//         GlobalPoint gp(pB.x(), pB.y(), pB.z());
-//         EBDetId ebid(barrelGeom_->getClosestCell(gp));
-//         int ieta = ebid.ieta();
-//         int iphi = ebid.iphi();
-//         auto cell = barrelGeom_->getGeometry(ebid);
-//         float dEta = hitEta - cell->etaPos();
-//         float dPhi = reco::deltaPhi(hitPhi, cell->phiPos());
-//         entIEta = ieta + dEta / cell->etaSpan() + 0.5f; // [ieta, ieta+1] crystal center @ 0.5
-//         entIPhi = iphi + dPhi / cell->phiSpan() + 0.5f; // [iphi, iphi+1] crystal center @ 0.5
-//       }
-//     }
-//     fineCrossedBoundary.push_back(crossed);
-//     fineEntIEta.push_back(entIEta);
-//     fineEntIPhi.push_back(entIPhi);
-//     fineEntE.push_back(entE);
-//     fineEntX.push_back(entX);
-//     fineEntY.push_back(entY);
-//     fineEntZ.push_back(entZ);
-
-//     // Parent + gen-level ancestor (reuse decayTree built earlier in analyze)
-//     int parentId = -1, ancestorId = tkId, current = tkId;
-//     auto it = decayTree.find(tkId);
-//     if (it != decayTree.end()) {
-//       parentId = it->second.parentTrackId;
-//       while (decayTree.count(current) && decayTree[current].parentTrackId >= 0) {
-//         current = decayTree[current].parentTrackId;
-//         if (decayTree.count(current) && decayTree[current].genPartIdx >= 0) ancestorId = current;
-//       }
-//     }
-//     fineParentId.push_back(parentId);
-//     fineAncestorId.push_back(ancestorId);
-//   }
-
-//   // ---- Fine-calo hits_and_fractions analog ----
-//   // Two-pass: first accumulate total energy per cell,
-//   // then compute per-(cell,track) fraction exactly like SimCluster::hits_and_fractions().
-
-//   std::map<std::pair<int,int>, float> cellTotalE;
-//   std::map<std::pair<std::pair<int,int>, int>, float> cellTrackE; // ((ieta,iphi), trackId) -> E
-
-//   for (const auto& hit : EBSimHit) {
-//       if (hit.time() > 500.) continue;
-//       EBDetId ebid(hit.id());
-//       auto cell = std::make_pair(ebid.ieta(), ebid.iphi());
-//       cellTotalE[cell] += hit.energy();
-
-//       int tkId = hit.geantTrackId();
-//       int legId = tkId, current = tkId;
-//       auto crossed = [&](int id){
-//           auto t = tkById.count((unsigned)id) ? tkById[(unsigned)id] : nullptr;
-//           return t && t->crossedBoundary();
-//       };
-//       if (!crossed(legId)) {
-//           while (decayTree.count(current) && decayTree[current].parentTrackId >= 0) {
-//               current = decayTree[current].parentTrackId;
-//               if (crossed(current)) { legId = current; break; }
-//           }
-//       }
-//       cellTrackE[{cell, legId}] += hit.energy();
-//   }
-
-//   for (const auto& [key, ei] : cellTrackE) {
-//       const auto& [cell, tkId] = key;
-//       float total = cellTotalE.at(cell);
-//       fineMapEvent.push_back(iEvent.id().event());
-//       fineMapIEta.push_back(cell.first);
-//       fineMapIPhi.push_back(cell.second);
-//       fineMapTrackId.push_back(tkId);
-//       fineMapEnergy.push_back(ei);
-//       fineMapFraction.push_back(total > 0.f ? ei / total : 0.f);
-
-//       int ancestorId = tkId, current = tkId;
-//       auto it = decayTree.find(tkId);
-//       if (it != decayTree.end()) {
-//         while (decayTree.count(current) && decayTree[current].parentTrackId >= 0) {
-//           current = decayTree[current].parentTrackId;
-//           if (decayTree.count(current) && decayTree[current].genPartIdx >= 0) ancestorId = current;
-//         }
-//       }
-//       fineMapAncestor.push_back(ancestorId);
-
-//       auto photonIt = photonAncestorToGenIdx.find(ancestorId);
-//         if (photonIt != photonAncestorToGenIdx.end()) {
-//             photonHitEvent.push_back(iEvent.id().event());
-//             photonHitGenIdx.push_back(photonIt->second);
-//             photonHitTrackId.push_back(ancestorId);
-//             photonHitIEta.push_back(cell.first);
-//             photonHitIPhi.push_back(cell.second);
-//             photonHitEnergy.push_back(ei);
-//             photonHitFraction.push_back(total > 0.f ? ei / total : 0.f);
-//         }
-//   }
 
   // **************** Fill all trees ****************
   simTree->Fill();
   recoTree->Fill();
   genTree->Fill();
   fineTree->Fill();
-  photonHitTree->Fill();
   puTree->Fill();
 } // --- end of analyze
 
@@ -728,19 +570,15 @@ void TruthCollector::clearEventData() {
 
   genE.clear(); genPPt.clear(); genPPhi.clear(); genPEta.clear();
   genIEta.clear(); genIPhi.clear(); genEtaF.clear(); genPhiF.clear();
-  genTrackId.clear(); genEvent.clear(); genIsConverted.clear(); genConvR.clear(); genConvZ.clear();
+  genTrackId.clear(); genEvent.clear(); genConvR.clear(); genConvZ.clear();
 
-  fineEvent.clear(); fineTrackId.clear(); finePDG.clear(); fineNHits.clear();
+  fineEvent.clear(); fineTrackId.clear(); finePDG.clear();
   fineE.clear(); fineInitialE.clear(); fineInitialEta.clear(); fineInitialPhi.clear();
   fineCrossedBoundary.clear(); fineEntEta.clear(); fineEntPhi.clear();
   fineEntIEta.clear(); fineEntIPhi.clear(); fineEntE.clear();
-  fineEntX.clear(); fineEntY.clear(); fineEntZ.clear();
-  fineParentId.clear(); fineAncestorId.clear(); fineGenIdx.clear();
+  fineParentId.clear(); fineAncestorId.clear();
   fineMapEvent.clear(); fineMapIEta.clear(); fineMapIPhi.clear(); fineMapTrackId.clear();
   fineMapEnergy.clear(); fineMapFraction.clear(); fineMapAncestor.clear();
-
-  photonHitEvent.clear(); photonHitGenIdx.clear(); photonHitTrackId.clear();
-  photonHitIEta.clear(); photonHitIPhi.clear(); photonHitEnergy.clear(); photonHitFraction.clear();
 
   puBx.clear(); puNInteractions.clear(); puTrueNumInteractions.clear(); puEvent.clear();
   puIEta.clear(); puIPhi.clear(); puE.clear();
@@ -809,7 +647,6 @@ void TruthCollector::beginJob() {
   genTree->Branch("ietaF",       &genEtaF);
   genTree->Branch("trackId",     &genTrackId);
   genTree->Branch("event",       &genEvent);
-  genTree->Branch("isConverted", &genIsConverted);
   genTree->Branch("convR",       &genConvR);
   genTree->Branch("convZ",       &genConvZ);
 
@@ -817,7 +654,6 @@ void TruthCollector::beginJob() {
   fineTree->Branch("event",           &fineEvent);
   fineTree->Branch("trackId",         &fineTrackId);
   fineTree->Branch("pdg",             &finePDG);
-  fineTree->Branch("nHits",           &fineNHits);
   fineTree->Branch("energy",          &fineE);
   fineTree->Branch("initialE",        &fineInitialE);
   fineTree->Branch("initialEta",      &fineInitialEta);
@@ -826,14 +662,10 @@ void TruthCollector::beginJob() {
   fineTree->Branch("entranceIEta",    &fineEntIEta);
   fineTree->Branch("entranceIPhi",    &fineEntIPhi);
   fineTree->Branch("entranceE",       &fineEntE);
-  fineTree->Branch("entranceX",       &fineEntX);
-  fineTree->Branch("entranceY",       &fineEntY);
-  fineTree->Branch("entranceZ",       &fineEntZ);
   fineTree->Branch("entranceEta",     &fineEntEta);
   fineTree->Branch("entrancePhi",     &fineEntPhi);
   fineTree->Branch("parentId",        &fineParentId);
   fineTree->Branch("ancestorId",      &fineAncestorId);
-  fineTree->Branch("genIdx",          &fineGenIdx);
   fineTree->Branch("mapEvent",       &fineMapEvent);
   fineTree->Branch("mapIEta",        &fineMapIEta);
   fineTree->Branch("mapIPhi",        &fineMapIPhi);
@@ -842,21 +674,12 @@ void TruthCollector::beginJob() {
   fineTree->Branch("mapFraction",    &fineMapFraction);
   fineTree->Branch("mapAncestor",    &fineMapAncestor);
 
-  photonHitTree = fs->make<TTree>("photonHitTree", "Per-cell hits and energy fractions for unconverted gen photons");
-  photonHitTree->Branch("event",    &photonHitEvent);
-  photonHitTree->Branch("genIdx",   &photonHitGenIdx);
-  photonHitTree->Branch("trackId",  &photonHitTrackId);
-  photonHitTree->Branch("ieta",     &photonHitIEta);
-  photonHitTree->Branch("iphi",     &photonHitIPhi);
-  photonHitTree->Branch("energy",   &photonHitEnergy);
-  photonHitTree->Branch("fraction", &photonHitFraction);
-
   puTree = fs->make<TTree>("puTree", "Pile-up information");
-  puTree->Branch("event", &puEvent);
-  puTree->Branch("ieta", &puIEta);
-  puTree->Branch("iphi", &puIPhi);
-  puTree->Branch("energy", &puE);
-  puTree->Branch("bx", &puBx);
+  puTree->Branch("event",   &puEvent);
+  puTree->Branch("ieta",    &puIEta);
+  puTree->Branch("iphi",    &puIPhi);
+  puTree->Branch("energy",  &puE);
+  puTree->Branch("bx",      &puBx);
   puTree->Branch("nInteractions", &puNInteractions);
   puTree->Branch("nTrueInteractions", &puTrueNumInteractions);
 } 

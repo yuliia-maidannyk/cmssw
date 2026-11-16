@@ -104,7 +104,6 @@ private:
   TTree* genTree;
   TTree* fineTree;
   TTree* fineMapTree;
-  TTree* photonHitTree;
   TTree* puTree;
 
   std::vector<int>      simPDG;
@@ -145,17 +144,15 @@ private:
   std::vector<float>    genPhiF;
   std::vector<uint64_t> genTrackId;
   std::vector<int>      genEvent;
-  std::vector<int>      genIsConverted;
   std::vector<float>    genConvR;
   std::vector<float>    genConvZ;
 
-  std::vector<int>   fineEvent, fineTrackId, finePDG, fineNHits;
+  std::vector<int>   fineEvent, fineTrackId, finePDG;
   std::vector<float> fineE;
   std::vector<float> fineInitialE, fineInitialEta, fineInitialPhi;
   std::vector<int>   fineCrossedBoundary;
   std::vector<float> fineEntIEta, fineEntIPhi, fineEntE;     // at ECAL entrance
-  std::vector<float> fineEntX, fineEntY, fineEntZ;           // global cm
-  std::vector<int>   fineParentId, fineAncestorId, fineGenIdx;
+  std::vector<int>   fineParentId, fineAncestorId;
   std::vector<float> fineEntEta, fineEntPhi;
   
   std::vector<int>      fineMapEvent;
@@ -166,13 +163,6 @@ private:
   std::vector<int>      fineMapAncestor;
 
   std::map<unsigned, unsigned> geantToIndex_;
-
-  std::vector<int>   photonHitEvent;
-  std::vector<int>   photonHitGenIdx;
-  std::vector<uint64_t>   photonHitTrackId;
-  std::vector<int>   photonHitIEta, photonHitIPhi;
-  std::vector<float> photonHitEnergy;
-  std::vector<float> photonHitFraction;
 
   std::vector<int>   puBx;              // bunch crossing, 0 = in-time
   std::vector<int>   puNInteractions;   // interactions mixed into that BX
